@@ -7,6 +7,9 @@ use crate::types::MaterialId;
 pub trait Material {
     /// Shade using incoming ray and hit information. Return linear color.
     fn shade(&self, ray_in: &Ray, rec: &HitRecord) -> Color;
+
+    /// Base color used for simple Lambertian direct lighting.
+    fn albedo(&self) -> Color { Color::ONE }
 }
 
 #[derive(Clone, Debug)]
@@ -21,6 +24,8 @@ impl Material for DotShading {
         let ndoti = rec.normal.dot(i).max(0.0);
         self.albedo * ndoti
     }
+
+    fn albedo(&self) -> Color { self.albedo }
 }
 
 #[derive(Default)]
