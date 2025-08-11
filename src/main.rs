@@ -2,9 +2,9 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod math;
-use math::{Color, Vec3, Ray};
+use math::{Color, Vec3, Ray, Mat3};
 mod hit;
-use hit::{Hittable, Sphere, HittableList, Mesh};
+use hit::{Hittable, Sphere, HittableList};
 mod camera;
 use camera::Camera;
 mod material;
@@ -117,7 +117,7 @@ fn render_scene_rgb(width: u32, height: u32, cam: &Camera, world: &(dyn Hittable
 fn main() -> std::io::Result<()> {
     // マテリアル登録
     let mut mats = MaterialRegistry::new();
-    let _orange: MaterialId = mats.add(DotShading { albedo: Color::new(0.9, 0.6, 0.2) });
+    let orange: MaterialId = mats.add(DotShading { albedo: Color::new(0.9, 0.6, 0.2) });
     let gray: MaterialId = mats.add(DotShading { albedo: Color::new(0.7, 0.7, 0.7) });
     let green: MaterialId = mats.add(DotShading { albedo: Color::new(0.2, 0.8, 0.3) });
 
@@ -126,19 +126,21 @@ fn main() -> std::io::Result<()> {
     // world.add(Box::new(Sphere { center: Vec3::new(0.0, 0.0, -1.0), radius: 0.5, material_id: orange }));
     world.add(Box::new(Sphere { center: Vec3::new(0.0, -100.5, -1.0), radius: 100.0, material_id: gray }));
 
-    // 単一三角形メッシュ（カメラ前方に配置）
-    let vertices = vec![
-        Vec3::new(-0.8, -0.2, -1.2),
-        Vec3::new( 0.8, -0.2, -1.2),
-        Vec3::new( 0.0,  0.7, -1.2),
-    ];
-
-    if let Ok(mut mesh) = gltf_loader::load_gltf_mesh(
+    // glTF メッシュを配置（回転＋スケールを線形行列に合成）
+    if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
         "assets/fox.glb",
-        gray,
+        orange,
+        Vec3::new(-0.5, -0.5, -3.0),
+        Mat3::from_euler_y(0.5) * Mat3::from_scale(0.01, 0.01, 0.01),
     ) {
-        mesh.set_position(Vec3::new(-0.5, 0.0, -3.0)); // 位置を設定
-        mesh.set_scale_uniform(0.01); // スケールを設定
+        world.add(Box::new(mesh));
+    }
+    if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
+        "assets/box.glb",
+        green,
+        Vec3::new(0.5, -0.0, -3.0),
+        Mat3::from_euler_y(0_f32) * Mat3::from_scale(0.1, 0.1, 0.1),
+    ) {
         world.add(Box::new(mesh));
     }
 

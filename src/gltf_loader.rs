@@ -1,9 +1,9 @@
 //! glTF から Mesh を構築する簡易ローダ。
 //! - 対応: TRIANGLES と TRIANGLE_STRIP のプリミティブ、position(必須) と indices（なければ順序どおり）
-//! - 変換: ノード変換は未適用（今後の拡張余地）。Mesh 側に position/scale はあるがここでは既定値。
+//! - 変換: ノード変換は未適用（今後の拡張余地）。Mesh には translate と linear(3x3) を適用可能。
 
 use crate::hit::Mesh;
-use crate::math::Vec3;
+use crate::math::{Vec3, Mat3};
 use crate::types::MaterialId;
 
 /// glTF/GLB から最初のメッシュ（全プリミティブ連結）を読み込み、
@@ -11,8 +11,8 @@ use crate::types::MaterialId;
 pub fn load_gltf_mesh_with_transform(
     path: &str,
     material_id: MaterialId,
-    position: Vec3,
-    scale: Vec3,
+    translate: Vec3,
+    linear: Mat3,
 ) -> Result<Mesh, Box<dyn std::error::Error>> {
     let (doc, buffers, _images) = gltf::import(path)?;
 
@@ -102,9 +102,9 @@ pub fn load_gltf_mesh_with_transform(
         }
     }
 
-    Ok(Mesh::with_transform(vertices, indices, material_id, position, scale))
+    Ok(Mesh::with_transform(vertices, indices, material_id, translate, linear))
 }
 
 pub fn load_gltf_mesh(path: &str, material_id: MaterialId) -> Result<Mesh, Box<dyn std::error::Error>> {
-    load_gltf_mesh_with_transform(path, material_id, Vec3::new(0.0, 0.0, 0.0), Vec3::new(1.0, 1.0, 1.0))
+    load_gltf_mesh_with_transform(path, material_id, Vec3::new(0.0, 0.0, 0.0), Mat3::identity())
 }

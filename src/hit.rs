@@ -1,6 +1,6 @@
 //! Hit utilities: sphere intersection and hit record.
 
-use crate::math::{Point3, Ray, Vec3};
+use crate::math::{Point3, Ray, Vec3, Mat3};
 use crate::types::MaterialId;
 
 #[derive(Clone, Copy, Debug)]
@@ -60,7 +60,7 @@ impl Hittable for Sphere {
     }
 }
 
-// 新規: Hittable のコレクション（シーン）
+// Hittable のコレクション（シーン）
 #[derive(Default)]
 pub struct HittableList {
     pub objects: Vec<Box<dyn Hittable + Send + Sync>>,
@@ -159,35 +159,32 @@ pub struct Mesh {
     pub vertices: Vec<Point3>,
     pub indices: Vec<[u32; 3]>,
     pub material_id: MaterialId,
-    // 追加: ローカル→ワールドの簡易変換（ワールド位置と各軸スケール）
-    pub position: Point3,
-    pub scale: Vec3,
+    pub translate: Vec3,
+    pub linear: Mat3,
+    pub inv_linear: Mat3,
 }
 
 impl Mesh {
-    /// 既定の変換（position=0, scale=1）でメッシュを生成。
     pub fn new(vertices: Vec<Point3>, indices: Vec<[u32; 3]>, material_id: MaterialId) -> Self {
-        Self { vertices, indices, material_id, position: Point3::ZERO, scale: Vec3::ONE }
+        Self { vertices, indices, material_id, translate: Vec3::ZERO, linear: Mat3::identity(), inv_linear: Mat3::identity() }
     }
 
-    /// 変換付きでメッシュを生成。
     pub fn with_transform(
         vertices: Vec<Point3>,
         indices: Vec<[u32; 3]>,
         material_id: MaterialId,
-        position: Point3,
-        scale: Vec3,
+        translate: Vec3,
+        linear: Mat3,
     ) -> Self {
-        Self { vertices, indices, material_id, position, scale }
+        let inv_linear = linear.inverse().unwrap_or(Mat3::identity());
+        Self { vertices, indices, material_id, translate, linear, inv_linear }
     }
 
-    /// 位置を再設定。
-    pub fn set_position(&mut self, position: Point3) { self.position = position; }
-
-    /// スケールを再設定（非一様スケール可）。
-    pub fn set_scale(&mut self, scale: Vec3) { self.scale = scale; }
-
-    pub fn set_scale_uniform(&mut self, scale: f32) { self.scale = Vec3::new(scale, scale, scale); }
+    pub fn set_translate(&mut self, t: Vec3) { self.translate = t; }
+    pub fn set_linear(&mut self, m: Mat3) {
+        self.linear = m;
+        self.inv_linear = m.inverse().unwrap_or(Mat3::identity());
+    }
 }
 
 impl Hittable for Mesh {
@@ -203,34 +200,40 @@ impl Hittable for Mesh {
             if i0 >= self.vertices.len() || i1 >= self.vertices.len() || i2 >= self.vertices.len() {
                 continue;
             }
-            // ローカル頂点にスケール・平行移動を適用してワールド座標へ
-            // v_w = position + (scale ◦ v_local)
-            let v0 = self.position + (self.vertices[i0] * self.scale);
-            let v1 = self.position + (self.vertices[i1] * self.scale);
-            let v2 = self.position + (self.vertices[i2] * self.scale);
+            // レイをローカル空間へ変換
+            let o_local = self.inv_linear.mul_vec3(r.origin - self.translate);
+            let d_local = self.inv_linear.mul_vec3(r.direction);
+            let r_local = Ray::new(o_local, d_local);
+
+            // ローカル頂点
+            let v0 = self.vertices[i0];
+            let v1 = self.vertices[i1];
+            let v2 = self.vertices[i2];
 
             // Möller–Trumbore（Triangle と同じ手順）
             // e1=v1-v0, e2=v2-v0, P=d×e2, det=e1·P, T=o-v0, Q=T×e1
             let e1 = v1 - v0;
             let e2 = v2 - v0;
-            let pvec = r.direction.cross(e2);
+            let pvec = r_local.direction.cross(e2);
             let det = e1.dot(pvec);
             let eps = 1e-8_f32;
             if det.abs() < eps { continue; }
             let inv_det = 1.0 / det;
-            let tvec = r.origin - v0;
+            let tvec = r_local.origin - v0;
             let u = tvec.dot(pvec) * inv_det;
             if u < 0.0 || u > 1.0 { continue; }
             let qvec = tvec.cross(e1);
-            let v = r.direction.dot(qvec) * inv_det;
+            let v = r_local.direction.dot(qvec) * inv_det;
             if v < 0.0 || u + v > 1.0 { continue; }
             let t = e2.dot(qvec) * inv_det;
             if t < t_min || t > closest_so_far { continue; }
 
+            // 交点はワールドのレイで復元
             let p = r.at(t);
-            // 非一様スケールでも、変換後の辺から計算するクロスは det(S)·S^{-T} n に比例し、方向は正しい。
-            let outward_normal = e1.cross(e2).normalized();
-            let rec = HitRecord::new(p, t, outward_normal, r.direction, self.material_id);
+            // ローカル幾何法線 → 逆行列転置でワールドへ
+            let n_local = e1.cross(e2).normalized();
+            let n_world = self.inv_linear.transpose().mul_vec3(n_local).normalized();
+            let rec = HitRecord::new(p, t, n_world, r.direction, self.material_id);
             closest_so_far = t;
             best = Some(rec);
         }
