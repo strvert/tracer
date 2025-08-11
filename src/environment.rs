@@ -46,7 +46,7 @@ impl SkyGradient {
 impl Environment for SkyGradient {
     fn radiance(&self, dir: Vec3) -> Color {
         let unit = dir.normalized();
-        let t = remap(unit.y, -1.0, 1.0, 0.0, 1.0);
+    let t = remap(unit[1], -1.0, 1.0, 0.0, 1.0);
         lerp(self.bottom, self.top, t)
     }
 }

@@ -2,7 +2,7 @@ use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 mod math;
-use math::{Color, Mat3, Vec3};
+use math::{Color, Vec3};
 mod hit;
 use hit::HittableList;
 mod camera;
@@ -45,7 +45,7 @@ fn main() -> std::io::Result<()> {
     let _gray: MaterialId = mats.add(Lambertian {
         albedo: Color::new(0.7, 0.7, 0.7),
     });
-    let green: MaterialId = mats.add(NormalizedBlinnPhong {
+    let _green: MaterialId = mats.add(NormalizedBlinnPhong {
         diffuse: Color::new(0.2, 0.8, 0.3),
         specular: Color::new(1.0, 1.0, 1.0),
         shininess: 32.0,
@@ -55,7 +55,7 @@ fn main() -> std::io::Result<()> {
     let mut world = HittableList::new();
     match gltf_loader::load_gltf_scene_meshes("assets/dragon.glb", orange) {
         Ok(meshes) => {
-            for mut mesh in meshes {
+            for mesh in meshes {
                 world.add(Box::new(mesh));
             }
         }

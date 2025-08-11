@@ -32,7 +32,7 @@ fn visible_to_light(rec_p: Vec3, light_pos: Vec3, world: &dyn Hittable) -> bool 
 #[inline]
 fn shade_direct(ctx: &RenderCtx, rec_p: Vec3, rec_n: Vec3, wo: Vec3, mat_id: MaterialId) -> Color {
     let mat = ctx.mats.get(mat_id);
-    let mut sum = Color::ZERO;
+    let mut sum = Color::BLACK;
     // ライト影響を累積的に計算
     for light in ctx.lights.iter() {
         // 光源からの方向を計算
@@ -73,7 +73,7 @@ fn shade_ambient(ctx: &RenderCtx, n: Vec3, wo: Vec3, mat_id: MaterialId) -> Colo
     let wi = n; // 代表方向としてシェーディング法線方向
     let cos_theta = n.dot(wi).max(0.0);
     if cos_theta <= 0.0 {
-        return Color::ZERO;
+        return Color::BLACK;
     }
     let f = mat.eval(wi, wo, n);
     let li = ctx.env.radiance(wi);

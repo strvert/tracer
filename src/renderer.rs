@@ -69,7 +69,7 @@ impl<'a, I: Integrator, S: Sampler> Renderer<'a, I, S> {
                     let mut rng = rng::Rng::from_seed(seed);
                     let mut offsets_buf: Vec<(f32, f32)> = Vec::with_capacity(16);
                     self.sampler.sample_offsets(&mut rng, &mut offsets_buf);
-                    let mut color = crate::math::Color::ZERO;
+                    let mut color = crate::math::Color::BLACK;
                     let mut aabb_sum: u32 = 0;
                     for (du, dv) in offsets_buf.iter().copied() {
                         let u = (x as f32 + du) / (w - 1) as f32;
@@ -83,7 +83,7 @@ impl<'a, I: Integrator, S: Sampler> Renderer<'a, I, S> {
                         aabb_sum = aabb_sum.saturating_add(stats.aabb_tests);
                     }
                     color /= offsets_buf.len() as f32;
-                    color = crate::math::Color::new(color.x.powf(inv_gamma), color.y.powf(inv_gamma), color.z.powf(inv_gamma));
+                    color = crate::math::Color::new(color[0].powf(inv_gamma), color[1].powf(inv_gamma), color[2].powf(inv_gamma));
                     row_rgb.extend_from_slice(&color.to_rgb8());
                     row_counts.push(aabb_sum);
                 }

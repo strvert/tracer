@@ -6,7 +6,7 @@
 use log::{debug, warn};
 
 use crate::hit::Mesh;
-use crate::math::{Mat3, Vec3};
+use crate::math::{Mat3, Mat4, Vec3};
 use crate::types::MaterialId;
 
 /// glTF/GLB から最初のメッシュ（全プリミティブ連結）を読み込み、
@@ -163,9 +163,6 @@ pub fn load_gltf_mesh_with_transform(
     let mut vertices: Vec<Vec3> = Vec::new();
     let mut indices: Vec<[u32; 3]> = Vec::new();
     let mut found = false;
-                                let mut pos_count = 0;
-                                let mut tri_count = 0;
-                                let prim_idx = 0; // Placeholder for primitive index
     for mesh in doc.meshes() {
         if mesh.index() == mesh_index {
             append_gltf_mesh_data(mesh, &buffers, &mut vertices, &mut indices);
@@ -221,8 +218,7 @@ pub fn load_gltf_scene_meshes(
     // ノードを DFS で辿ってインスタンス化
     fn traverse_node(
         node: gltf::Node,
-        parent_t: Vec3,
-        parent_l: Mat3,
+        parent_m: Mat4,
         buffers: &Vec<gltf::buffer::Data>,
         material_id: MaterialId,
         out: &mut Vec<Mesh>,
@@ -232,25 +228,24 @@ pub fn load_gltf_scene_meshes(
         let r_local = quat_to_mat3(r[0], r[1], r[2], r[3]);
         let s_local = Mat3::from_scale(s[0], s[1], s[2]);
         let l_local = r_local * s_local; // linear = R * S
-        let t_world = parent_t + parent_l.mul_vec3(t_local);
-        let l_world = parent_l * l_local;
+        let m_local = Mat4::from_trs(t_local, l_local); // T * R * S（列優先）
+        let m_world = parent_m * m_local;
 
         if let Some(gmesh) = node.mesh() {
             let mut vertices: Vec<Vec3> = Vec::new();
             let mut indices: Vec<[u32; 3]> = Vec::new();
             append_gltf_mesh_data(gmesh, buffers, &mut vertices, &mut indices);
             if !vertices.is_empty() && !indices.is_empty() {
-                out.push(Mesh::with_transform(
+                out.push(Mesh::with_xform(
                     vertices,
                     indices,
                     material_id,
-                    t_world,
-                    l_world,
+                    m_world,
                 ));
             }
         }
         for child in node.children() {
-            traverse_node(child, t_world, l_world, buffers, material_id, out);
+            traverse_node(child, m_world, buffers, material_id, out);
         }
     }
 
@@ -258,8 +253,7 @@ pub fn load_gltf_scene_meshes(
         for node in scene.nodes() {
             traverse_node(
                 node,
-                Vec3::ZERO,
-                Mat3::identity(),
+                Mat4::identity(),
                 &buffers,
                 material_id,
                 &mut out,
@@ -271,8 +265,7 @@ pub fn load_gltf_scene_meshes(
             for node in scene.nodes() {
                 traverse_node(
                     node,
-                    Vec3::ZERO,
-                    Mat3::identity(),
+                    Mat4::identity(),
                     &buffers,
                     material_id,
                     &mut out,

@@ -10,7 +10,7 @@ impl Material for Lambertian {
     fn eval(&self, wi: Vec3, _wo: Vec3, n: Vec3) -> Color {
         // Lambert BRDF: f_d = ρ/π（cosθ はインテグレータ側で掛ける）。
         // 反対半球からの入射は 0。
-        if n.dot(wi) <= 0.0 { return Color::ZERO; }
+        if n.dot(wi) <= 0.0 { return Color::BLACK; }
         self.albedo * core::f32::consts::FRAC_1_PI
     }
 }
@@ -32,7 +32,7 @@ impl Material for Phong {
     fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
         // 反対半球からの入射は 0。
         let ndotl = n.dot(wi);
-        if ndotl <= 0.0 { return Color::ZERO; }
+        if ndotl <= 0.0 { return Color::BLACK; }
         // 反射方向ベクトル r
         let r = -wi + 2.0 * ndotl * n;
         // 反射方向と視線の整合度（R·V）
@@ -58,7 +58,7 @@ pub struct BlinnPhong {
 
 impl Material for BlinnPhong {
     fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        if n.dot(wi) <= 0.0 { return Color::ZERO; }
+        if n.dot(wi) <= 0.0 { return Color::BLACK; }
         // ハーフベクトル H = normalize(wi + wo)
         let h = (wi + wo).normalized();
         let ndoth = n.dot(h).max(0.0);
@@ -83,7 +83,7 @@ pub struct NormalizedBlinnPhong {
 
 impl Material for NormalizedBlinnPhong {
     fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        if n.dot(wi) <= 0.0 { return Color::ZERO; }
+        if n.dot(wi) <= 0.0 { return Color::BLACK; }
         // ハーフベクトル H = normalize(wi + wo)
         let h = (wi + wo).normalized();
         let ndoth = n.dot(h).max(0.0);
@@ -119,7 +119,7 @@ impl Material for NormalizedPhong {
     fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
         // 反対半球は寄与しない
         let ndotl = n.dot(wi);
-        if ndotl <= 0.0 { return Color::ZERO; }
+        if ndotl <= 0.0 { return Color::BLACK; }
         // 反射ベクトル
         let r = -wi + 2.0 * ndotl * n;
         let rv = r.dot(wo).max(0.0);

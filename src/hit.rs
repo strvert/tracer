@@ -1,6 +1,6 @@
 //! Hit utilities: sphere intersection and hit record.
 
-use crate::math::{Point3, Ray, Vec3, Mat3};
+use crate::math::{Point3, Ray, Vec3, Mat3, Mat4};
 use crate::types::MaterialId;
 
 // 数値安定用の小さな閾値（Möller–Trumbore の det 判定などに使用）
@@ -133,7 +133,7 @@ impl Hittable for Sphere {
 
     fn bounds(&self) -> Aabb {
         let r = Vec3::splat(self.radius);
-        Aabb::new(self.center - r, self.center + r)
+    Aabb::new(self.center - r, self.center + r)
     }
 }
 
@@ -180,7 +180,7 @@ impl HittableList {
 
 impl Hittable for HittableList {
     fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
-        let inv_dir = Vec3::new(1.0 / r.direction.x, 1.0 / r.direction.y, 1.0 / r.direction.z);
+        let inv_dir = Vec3::new(1.0 / r.direction[0], 1.0 / r.direction[1], 1.0 / r.direction[2]);
         let o = r.origin;
         traverse_bvh(
             &self.tlas_nodes,
@@ -322,14 +322,14 @@ impl Aabb {
 
     fn from_triangle(v0: Vec3, v1: Vec3, v2: Vec3) -> Self {
         let min = Vec3::new(
-            v0.x.min(v1.x).min(v2.x),
-            v0.y.min(v1.y).min(v2.y),
-            v0.z.min(v1.z).min(v2.z),
+            v0[0].min(v1[0]).min(v2[0]),
+            v0[1].min(v1[1]).min(v2[1]),
+            v0[2].min(v1[2]).min(v2[2]),
         );
         let max = Vec3::new(
-            v0.x.max(v1.x).max(v2.x),
-            v0.y.max(v1.y).max(v2.y),
-            v0.z.max(v1.z).max(v2.z),
+            v0[0].max(v1[0]).max(v2[0]),
+            v0[1].max(v1[1]).max(v2[1]),
+            v0[2].max(v1[2]).max(v2[2]),
         );
         Self { min, max }
     }
@@ -337,14 +337,14 @@ impl Aabb {
     fn union(self, other: Self) -> Self {
         Self::new(
             Vec3::new(
-                self.min.x.min(other.min.x),
-                self.min.y.min(other.min.y),
-                self.min.z.min(other.min.z),
+                self.min[0].min(other.min[0]),
+                self.min[1].min(other.min[1]),
+                self.min[2].min(other.min[2]),
             ),
             Vec3::new(
-                self.max.x.max(other.max.x),
-                self.max.y.max(other.max.y),
-                self.max.z.max(other.max.z),
+                self.max[0].max(other.max[0]),
+                self.max[1].max(other.max[1]),
+                self.max[2].max(other.max[2]),
             ),
         )
     }
@@ -355,45 +355,45 @@ impl Aabb {
     #[inline(always)]
     pub fn hit(&self, o: Vec3, inv_d: Vec3, mut t_min: f32, mut t_max: f32) -> Option<(f32, f32)> {
         // X
-        let tx1 = (self.min.x - o.x) * inv_d.x;
-        let tx2 = (self.max.x - o.x) * inv_d.x;
+    let tx1 = (self.min[0] - o[0]) * inv_d[0];
+    let tx2 = (self.max[0] - o[0]) * inv_d[0];
         t_min = t_min.max(tx1.min(tx2));
         t_max = t_max.min(tx1.max(tx2));
         if t_min > t_max { return None; }
         // Y
-        let ty1 = (self.min.y - o.y) * inv_d.y;
-        let ty2 = (self.max.y - o.y) * inv_d.y;
+    let ty1 = (self.min[1] - o[1]) * inv_d[1];
+    let ty2 = (self.max[1] - o[1]) * inv_d[1];
         t_min = t_min.max(ty1.min(ty2));
         t_max = t_max.min(ty1.max(ty2));
         if t_min > t_max { return None; }
         // Z
-        let tz1 = (self.min.z - o.z) * inv_d.z;
-        let tz2 = (self.max.z - o.z) * inv_d.z;
+    let tz1 = (self.min[2] - o[2]) * inv_d[2];
+    let tz2 = (self.max[2] - o[2]) * inv_d[2];
         t_min = t_min.max(tz1.min(tz2));
         t_max = t_max.min(tz1.max(tz2));
         if t_min > t_max { return None; }
         Some((t_min, t_max))
     }
 
-    /// ローカル AABB を線形変換（3x3）と平行移動でワールドへ送り、ワールド AABB を返す。
+    /// ローカル AABB を 4x4 アフィン変換でワールドへ送り、ワールド AABB を返す。
     /// 任意の回転・非一様スケールでも、8 つの頂点を変換して再 AABB 化すれば安全。
-    pub fn transform(self, linear: Mat3, translate: Vec3) -> Self {
+    pub fn transform_affine(self, m: Mat4) -> Self {
         let corners = [
-            Vec3::new(self.min.x, self.min.y, self.min.z),
-            Vec3::new(self.max.x, self.min.y, self.min.z),
-            Vec3::new(self.min.x, self.max.y, self.min.z),
-            Vec3::new(self.min.x, self.min.y, self.max.z),
-            Vec3::new(self.max.x, self.max.y, self.min.z),
-            Vec3::new(self.max.x, self.min.y, self.max.z),
-            Vec3::new(self.min.x, self.max.y, self.max.z),
-            Vec3::new(self.max.x, self.max.y, self.max.z),
+            Vec3::new(self.min[0], self.min[1], self.min[2]),
+            Vec3::new(self.max[0], self.min[1], self.min[2]),
+            Vec3::new(self.min[0], self.max[1], self.min[2]),
+            Vec3::new(self.min[0], self.min[1], self.max[2]),
+            Vec3::new(self.max[0], self.max[1], self.min[2]),
+            Vec3::new(self.max[0], self.min[1], self.max[2]),
+            Vec3::new(self.min[0], self.max[1], self.max[2]),
+            Vec3::new(self.max[0], self.max[1], self.max[2]),
         ];
         let mut wmin = Vec3::splat(f32::INFINITY);
         let mut wmax = Vec3::splat(f32::NEG_INFINITY);
         for c in corners.iter() {
-            let w = translate + linear.mul_vec3(*c);
-            wmin = Vec3::new(wmin.x.min(w.x), wmin.y.min(w.y), wmin.z.min(w.z));
-            wmax = Vec3::new(wmax.x.max(w.x), wmax.y.max(w.y), wmax.z.max(w.z));
+            let w = m.mul_point(*c);
+            wmin = Vec3::new(wmin[0].min(w[0]), wmin[1].min(w[1]), wmin[2].min(w[2]));
+            wmax = Vec3::new(wmax[0].max(w[0]), wmax[1].max(w[1]), wmax[2].max(w[2]));
         }
         Aabb::new(wmin, wmax)
     }
@@ -424,8 +424,8 @@ fn build_bvh_nodes(nodes: &mut Vec<BvhNode>, index: &mut [u32], bounds: &[Aabb],
         let mut cmax = Vec3::splat(f32::NEG_INFINITY);
         for i in start..end {
             let c = bounds[idx[i] as usize].centroid();
-            cmin = Vec3::new(cmin.x.min(c.x), cmin.y.min(c.y), cmin.z.min(c.z));
-            cmax = Vec3::new(cmax.x.max(c.x), cmax.y.max(c.y), cmax.z.max(c.z));
+            cmin = Vec3::new(cmin[0].min(c[0]), cmin[1].min(c[1]), cmin[2].min(c[2]));
+            cmax = Vec3::new(cmax[0].max(c[0]), cmax[1].max(c[1]), cmax[2].max(c[2]));
         }
         (cmin, cmax)
     }
@@ -438,14 +438,14 @@ fn build_bvh_nodes(nodes: &mut Vec<BvhNode>, index: &mut [u32], bounds: &[Aabb],
             return i;
         }
         let (cmin, cmax) = centroid_bounds(idx, bounds, start, end);
-        let ext = cmax - cmin;
-        let mut axis = 0; if ext.y > ext.x { axis = 1; } if ext.z > ext[axis] { axis = 2; }
+    let ext = cmax - cmin;
+    let mut axis = 0; if ext[1] > ext[0] { axis = 1; } if ext[2] > ext[axis] { axis = 2; }
         let mid = (start + end) / 2;
         idx[start..end].sort_by(|&a, &b| {
             let ca = bounds[a as usize].centroid();
             let cb = bounds[b as usize].centroid();
-            let ka = match axis { 0 => ca.x, 1 => ca.y, _ => ca.z };
-            let kb = match axis { 0 => cb.x, 1 => cb.y, _ => cb.z };
+            let ka = ca[axis];
+            let kb = cb[axis];
             ka.partial_cmp(&kb).unwrap_or(core::cmp::Ordering::Equal)
         });
         let l = build_range(nodes, idx, bounds, start, mid, leaf_threshold);
@@ -526,10 +526,9 @@ pub struct Mesh {
     pub vertices: Vec<Point3>,
     pub indices: Vec<[u32; 3]>,
     pub material_id: MaterialId,
-    pub translate: Vec3,
-    pub linear: Mat3,
-    pub inv_linear: Mat3,
-    pub normal_linear: Mat3, // 追加: 法線変換（inv_linear.transpose()）
+    pub xform: Mat4,          // ワールドへのアフィン変換
+    pub inv_xform: Mat4,      // その逆（アフィン）
+    pub normal_linear: Mat3,  // 法線変換用 3x3（inv_linear.transpose()）
     // BLAS: ローカル BVH（AABB と三角の並び替え）
     tri_bounds: Vec<Aabb>,
     tri_index: Vec<u32>,
@@ -552,9 +551,8 @@ impl Mesh {
             vertices,
             indices,
             material_id,
-            translate: Vec3::ZERO,
-            linear: Mat3::identity(),
-            inv_linear: Mat3::identity(),
+            xform: Mat4::identity(),
+            inv_xform: Mat4::identity(),
             normal_linear: Mat3::identity(),
             tri_bounds: Vec::new(),
             tri_index: Vec::new(),
@@ -575,13 +573,42 @@ impl Mesh {
     ) -> Self {
         let inv_linear = linear.inverse().unwrap_or(Mat3::identity());
         let normal_linear = inv_linear.transpose();
+        let xform = Mat4::from_trs(translate, linear);
+        let inv_xform = xform.inverse_affine().unwrap_or(Mat4::identity());
         let mut m = Self {
             vertices,
             indices,
             material_id,
-            translate,
-            linear,
-            inv_linear,
+            xform,
+            inv_xform,
+            normal_linear,
+            tri_bounds: Vec::new(),
+            tri_index: Vec::new(),
+            tri_accel: Vec::new(),
+            nodes: Vec::new(),
+            root_idx: 0,
+        };
+        m.build_bvh();
+        m
+    }
+
+    /// 4x4 アフィン行列で直接ワールド変換を与えるコンストラクタ
+    pub fn with_xform(
+        vertices: Vec<Point3>,
+        indices: Vec<[u32; 3]>,
+        material_id: MaterialId,
+        xform: Mat4,
+    ) -> Self {
+        let l = xform.upper3x3();
+        let inv_l = l.inverse().unwrap_or(Mat3::identity());
+        let normal_linear = inv_l.transpose();
+        let inv_xform = xform.inverse_affine().unwrap_or(Mat4::identity());
+        let mut m = Self {
+            vertices,
+            indices,
+            material_id,
+            xform,
+            inv_xform,
             normal_linear,
             tri_bounds: Vec::new(),
             tri_index: Vec::new(),
@@ -594,13 +621,22 @@ impl Mesh {
     }
 
     pub fn add_translate(&mut self, t: Vec3) {
-        self.translate += t;
+        // xform = T(t) * xform
+        let m = Mat4::from_trs(t, Mat3::identity());
+        self.xform = m * self.xform;
+        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
     }
-    pub fn set_translate(&mut self, t: Vec3) { self.translate = t; }
+    pub fn set_translate(&mut self, t: Vec3) {
+        let l = self.xform.upper3x3();
+        self.xform = Mat4::from_trs(t, l);
+        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
+    }
     pub fn set_linear(&mut self, m: Mat3) {
-        self.linear = m;
-        self.inv_linear = m.inverse().unwrap_or(Mat3::identity());
-    self.normal_linear = self.inv_linear.transpose();
+        let t = self.xform.translation();
+        self.xform = Mat4::from_trs(t, m);
+        let inv_linear = m.inverse().unwrap_or(Mat3::identity());
+        self.normal_linear = inv_linear.transpose();
+        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
     }
 
     // BVH 構築（中央値分割）。ローカル空間内での固定構造。
@@ -637,11 +673,11 @@ impl Mesh {
 
 impl Hittable for Mesh {
     fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
-        // レイをローカル空間に一度だけ変換
-        let o_local = self.inv_linear.mul_vec3(r.origin - self.translate);
-        let d_local = self.inv_linear.mul_vec3(r.direction);
+    // レイをローカル空間に一度だけ変換（アフィンの逆）
+    let o_local = self.inv_xform.mul_point(r.origin);
+    let d_local = self.inv_xform.mul_dir(r.direction);
         let r_local = Ray::new(o_local, d_local);
-        let inv_dir_l = Vec3::new(1.0 / d_local.x, 1.0 / d_local.y, 1.0 / d_local.z);
+    let inv_dir_l = Vec3::new(1.0 / d_local[0], 1.0 / d_local[1], 1.0 / d_local[2]);
 
         traverse_bvh(
             &self.nodes,
@@ -655,11 +691,18 @@ impl Hittable for Mesh {
                 for &tri_id in &self.tri_index[start..end] {
                     let acc = self.tri_accel[tri_id as usize];
                     stats_inc_tri();
-                    if let Some((t, _u, _v)) = intersect_triangle_precomputed(&r_local, acc.v0, acc.e1, acc.e2, t_min, cs) {
-                        let p = r.at(t);
+                    if let Some((t_local, _u, _v)) = intersect_triangle_precomputed(&r_local, acc.v0, acc.e1, acc.e2, t_min, cs) {
+                        // 交差点をローカル→ワールドへ
+                        let p_local = r_local.at(t_local);
+                        let p_world = self.xform.mul_point(p_local);
+                        // ワールド空間での t を再計算（射影）
+                        let num = (p_world - r.origin).dot(r.direction);
+                        let denom = r.direction.dot(r.direction);
+                        let t_world = if denom != 0.0 { num / denom } else { t_local };
+                        if t_world < t_min || t_world > cs { continue; }
                         let n_world = self.normal_linear.mul_vec3(acc.n_g).normalized();
-                        let rec = HitRecord::new(p, t, n_world, r.direction, self.material_id);
-                        cs = t; best = Some(rec);
+                        let rec = HitRecord::new(p_world, t_world, n_world, r.direction, self.material_id);
+                        cs = t_world; best = Some(rec);
                     }
                 }
                 best
@@ -668,15 +711,15 @@ impl Hittable for Mesh {
     }
 
     fn bounds(&self) -> Aabb {
-        // BLAS ルートのローカル AABB をワールドへ変換
+        // BLAS ルートのローカル AABB をワールドへ変換（4x4）
         if let Some(b) = self.local_bounds() {
-            return b.transform(self.linear, self.translate);
+            return b.transform_affine(self.xform);
         }
         // 退避: 頂点から直接計算（空でなければ）
         if !self.vertices.is_empty() {
             let mut b = Aabb::new(Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY));
             for v in &self.vertices { b = b.union(Aabb::new(*v, *v)); }
-            return b.transform(self.linear, self.translate);
+            return b.transform_affine(self.xform);
         }
         Aabb::new(Vec3::splat(0.0), Vec3::splat(0.0))
     }
