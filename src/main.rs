@@ -19,7 +19,7 @@ use environment::{Environment, SkyGradient};
 mod sampler;
 use sampler::{Sampler, MsaaRgGeneric};
 mod output;
-use output::{ImageBackend, PpmBackend};
+use output::{ImageBackend, PngBackend};
 
 const WIDTH: u32 = 1280; // 720p 横幅
 const HEIGHT: u32 = 720; // 720p 縦幅
@@ -150,7 +150,7 @@ fn main() -> std::io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs();
-    let backend = PpmBackend::default();
+    let backend = PngBackend::default();
     let filename = format!("output/{}.{}", timestamp, backend.file_extension());
     let out_path = Path::new(&filename);
     

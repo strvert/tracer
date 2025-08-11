@@ -3,6 +3,7 @@
 use std::fs::{self, File};
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use image::{ImageBuffer, Rgb};
 
 /// 画像出力バックエンドの共通トレイト。
 /// ピクセルは RGB の連続バイト列（行は上から下へ、左→右）を想定。
@@ -45,4 +46,28 @@ impl ImageBackend for PpmBackend {
     }
 
     fn file_extension(&self) -> &'static str { "ppm" }
+}
+
+/// PNG バックエンド。`image` クレートを使用してエンコード。
+#[derive(Default, Clone, Copy, Debug)]
+pub struct PngBackend;
+
+impl ImageBackend for PngBackend {
+    fn write(&self, path: &Path, width: u32, height: u32, pixels: &[u8]) -> std::io::Result<()> {
+        if let Some(parent) = path.parent() {
+            if !parent.as_os_str().is_empty() {
+                fs::create_dir_all(parent)?;
+            }
+        }
+        let expected = (width as usize) * (height as usize) * 3;
+        assert!(pixels.len() == expected, "pixel buffer size mismatch: {} != {}", pixels.len(), expected);
+
+        // image crate の ImageBuffer に詰め替え（RGB8）
+        let img: ImageBuffer<Rgb<u8>, _> = ImageBuffer::from_raw(width, height, pixels.to_vec())
+            .expect("invalid buffer size for ImageBuffer");
+
+        img.save(path).map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e))
+    }
+
+    fn file_extension(&self) -> &'static str { "png" }
 }
