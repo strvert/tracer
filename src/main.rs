@@ -136,10 +136,10 @@ fn main() -> std::io::Result<()> {
         world.add(Box::new(mesh));
     }
     if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
-        "assets/box.glb",
+        "assets/fox.glb",
         green,
-        Vec3::new(0.5, -0.0, -3.0),
-        Mat3::from_euler_y(0_f32) * Mat3::from_scale(0.1, 0.1, 0.1),
+        Vec3::new(0.5, -0.5, -3.0),
+        Mat3::from_euler_y(0_f32) * Mat3::from_scale(0.01, 0.01, 0.01),
     ) {
         world.add(Box::new(mesh));
     }
@@ -165,7 +165,7 @@ fn main() -> std::io::Result<()> {
     let out_path = Path::new(&filename);
     
     // 使用するサンプラーを選択：汎用回転グリッド RGSS。AA 無しなら `NoAa::default()` を使う。
-    let sampler = MsaaRgGeneric::new(1);
+    let sampler = MsaaRgGeneric::new(8);
     let pixels = render_scene_rgb(WIDTH, HEIGHT, &camera, &world, &mats, &lights, &sky, &sampler);
     backend.write(out_path, WIDTH, HEIGHT, &pixels)?;
     eprintln!("wrote {}", out_path.display());
