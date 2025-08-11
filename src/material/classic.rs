@@ -7,10 +7,11 @@ pub struct Lambertian {
 }
 
 impl Material for Lambertian {
-    fn shade(&self, wi: Vec3, _wo: Vec3, n: Vec3) -> Color {
-        // Lambert: f = ρ/π。ここでは shade = (ρ/π)·max(n·wi, 0)
-        let ndotl = n.dot(wi).max(0.0);
-        self.albedo * ndotl * core::f32::consts::FRAC_1_PI
+    fn eval(&self, wi: Vec3, _wo: Vec3, n: Vec3) -> Color {
+        // Lambert BRDF: f_d = ρ/π（cosθ はインテグレータ側で掛ける）。
+        // 反対半球からの入射は 0。
+        if n.dot(wi) <= 0.0 { return Color::ZERO; }
+        self.albedo * core::f32::consts::FRAC_1_PI
     }
 }
 
@@ -28,19 +29,18 @@ pub struct Phong {
 }
 
 impl Material for Phong {
-    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        // 拡散項: Lambertian と同様に計算
-        let ndotl = n.dot(wi).max(0.0);
-        // バックフェースは寄与しない
+    fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        // 反対半球からの入射は 0。
+        let ndotl = n.dot(wi);
         if ndotl <= 0.0 { return Color::ZERO; }
         // 反射方向ベクトル r
         let r = -wi + 2.0 * ndotl * n;
-        // 反射方向と視線の整合度
+        // 反射方向と視線の整合度（R·V）
         let rv = r.dot(wo).max(0.0);
-        // スペキュラ項
-        let spec = rv.powf(self.shininess.max(0.0));
-        // 拡散項とスペキュラ項を合成
-        self.diffuse * ndotl + self.specular * spec
+        // 非正規化の見た目モデル: f ≈ ρ_d/π + ρ_s·(R·V)^n
+        let diffuse_f = self.diffuse * core::f32::consts::FRAC_1_PI;
+        let specular_f = self.specular * rv.powf(self.shininess.max(0.0));
+        diffuse_f + specular_f
     }
 }
 
@@ -57,17 +57,15 @@ pub struct BlinnPhong {
 }
 
 impl Material for BlinnPhong {
-    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        // cosθ = max(N·L, 0)
-        let ndotl = n.dot(wi).max(0.0);
-        if ndotl <= 0.0 { return Color::ZERO; }
+    fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        if n.dot(wi) <= 0.0 { return Color::ZERO; }
         // ハーフベクトル H = normalize(wi + wo)
         let h = (wi + wo).normalized();
-        // N·H を 0 以上にクランプ
         let ndoth = n.dot(h).max(0.0);
-        // 非正規化なので、鏡面には ndotl を掛けない（古典的見た目式）
-        let spec = ndoth.powf(self.shininess.max(0.0));
-        self.diffuse * ndotl + self.specular * spec
+        // BRDF 近似: f ≈ ρ_d/π + ρ_s·(N·H)^m（非正規化）
+        let diffuse_f = self.diffuse * core::f32::consts::FRAC_1_PI;
+        let specular_f = self.specular * ndoth.powf(self.shininess.max(0.0));
+        diffuse_f + specular_f
     }
 }
 
@@ -84,27 +82,22 @@ pub struct NormalizedBlinnPhong {
 }
 
 impl Material for NormalizedBlinnPhong {
-    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        // cosθ = max(N·L, 0)
-        let ndotl = n.dot(wi).max(0.0);
-        if ndotl <= 0.0 { return Color::ZERO; }
+    fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        if n.dot(wi) <= 0.0 { return Color::ZERO; }
         // ハーフベクトル H = normalize(wi + wo)
         let h = (wi + wo).normalized();
-        // N·H を 0 以上にクランプ
         let ndoth = n.dot(h).max(0.0);
 
-        // 拡散 BRDF: f_d = ρ_d / π → Li 係数としては ndotl を掛ける
-        let diffuse_term = self.diffuse * (core::f32::consts::FRAC_1_PI * ndotl);
+        // f_d = ρ_d / π
+        let diffuse_f = self.diffuse * core::f32::consts::FRAC_1_PI;
 
         // 正規化係数: (m+8)/(8π)
         let m = self.shininess.max(0.0);
         let norm_coeff = (m + 8.0) * (core::f32::consts::FRAC_1_PI / 8.0);
-        // スペキュラ BRDF: f_s ≈ ρ_s · norm_coeff · (N·H)^m
-        let fs = self.specular * (norm_coeff * ndoth.powf(m));
-        // レンダリング方程式の cosθ（N·L）を掛ける
-        let specular_term = fs * ndotl;
+        // f_s ≈ ρ_s · norm_coeff · (N·H)^m
+        let specular_f = self.specular * (norm_coeff * ndoth.powf(m));
 
-        diffuse_term + specular_term
+        diffuse_f + specular_f
     }
 }
 
@@ -123,23 +116,19 @@ pub struct NormalizedPhong {
 }
 
 impl Material for NormalizedPhong {
-    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
-        // cosθ = max(N·L, 0)
-        let ndotl = n.dot(wi).max(0.0); // 入射と法線の余弦
-        if ndotl <= 0.0 { return Color::ZERO; } // バックフェースは寄与なし
-        // 反射ベクトル R = reflect(-wi, n) = -wi + 2(n·wi)n
-        let r = -wi + 2.0 * ndotl * n; // 鏡面反射方向
-        // ハイライトの鋭さ用ドット（R·V）を 0 以上にクランプ
-        let rv = r.dot(wo).max(0.0); // 反射方向と視線の整合度
-        // Lambert の BRDF: f_d = ρ_d/π
-        let diffuse_term = self.diffuse * core::f32::consts::FRAC_1_PI;
-        // 正規化 Phong のスペキュラ BRDF 係数: (n+2)/(2π)
-        let n_clamped = self.shininess.max(0.0); // 負の指数を防止
-        let norm_coeff = 0.5 * (n_clamped + 2.0) * core::f32::consts::FRAC_1_PI; // (n+2)/(2π)
-        // スペキュラ BRDF: f_s = ρ_s * norm_coeff * (R·V)^n
-        let fs = self.specular * (norm_coeff * rv.powf(n_clamped));
-        let specular_term = fs;
-        // 拡散 + 鏡面
-        (diffuse_term + specular_term) * ndotl
+    fn eval(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        // 反対半球は寄与しない
+        let ndotl = n.dot(wi);
+        if ndotl <= 0.0 { return Color::ZERO; }
+        // 反射ベクトル
+        let r = -wi + 2.0 * ndotl * n;
+        let rv = r.dot(wo).max(0.0);
+        // f_d = ρ_d/π
+        let diffuse_f = self.diffuse * core::f32::consts::FRAC_1_PI;
+        // f_s = ρ_s * (n+2)/(2π) * (R·V)^n
+        let n_clamped = self.shininess.max(0.0);
+        let norm_coeff = 0.5 * (n_clamped + 2.0) * core::f32::consts::FRAC_1_PI;
+        let specular_f = self.specular * (norm_coeff * rv.powf(n_clamped));
+        diffuse_f + specular_f
     }
 }

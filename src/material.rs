@@ -4,12 +4,13 @@ use crate::math::Color;
 use crate::types::MaterialId;
 
 pub trait Material {
-    /// 直接照明のシェーディング係数を返す（線形色空間）。
+    /// BRDF を評価して返す（線形色空間）。
     /// 入力ベクトルはすべて単位ベクトル:
     /// - wi: 入射（点→光）方向
     /// - wo: 出射（点→カメラ）方向
     /// - n:  シェーディング法線
-    fn shade(&self, wi: crate::math::Vec3, wo: crate::math::Vec3, n: crate::math::Vec3) -> Color;
+    /// 返り値は f(wi, wo)（cosθ は含めない）です。
+    fn eval(&self, wi: crate::math::Vec3, wo: crate::math::Vec3, n: crate::math::Vec3) -> Color;
 }
 
 // 古典的アルゴリズム系のマテリアルは submodule に集約

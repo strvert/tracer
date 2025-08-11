@@ -26,8 +26,7 @@ mod diagnostics;
 mod output;
 use output::{ImageBackend, PngBackend};
 
-use crate::material::classic::NormalizedPhong;
-use crate::material::{BlinnPhong, NormalizedBlinnPhong, Phong};
+use crate::material::NormalizedBlinnPhong;
 mod gltf_loader;
 
 const WIDTH: u32 = 1280; // 720p 横幅
@@ -42,7 +41,7 @@ fn main() -> std::io::Result<()> {
     let orange: MaterialId = mats.add(Lambertian {
         albedo: Color::new(0.9, 0.6, 0.2),
     });
-    let gray: MaterialId = mats.add(Lambertian {
+    let _gray: MaterialId = mats.add(Lambertian {
         albedo: Color::new(0.7, 0.7, 0.7),
     });
     let green: MaterialId = mats.add(NormalizedBlinnPhong {
