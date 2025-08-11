@@ -1,5 +1,4 @@
-use std::fs::{self, File};
-use std::io::{BufWriter, Write};
+// use std::fs; // 現在は未使用
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,6 +18,8 @@ mod environment;
 use environment::{Environment, SkyGradient};
 mod sampler;
 use sampler::{Sampler, MsaaRgGeneric};
+mod output;
+use output::{ImageBackend, PpmBackend};
 
 const WIDTH: u32 = 1280; // 720p 横幅
 const HEIGHT: u32 = 720; // 720p 縦幅
@@ -109,36 +110,12 @@ fn render_scene_rgb(width: u32, height: u32, cam: &Camera, world: &dyn Hittable,
 }
 
 // PPM(P6) を書き出す。pixels は RGB の連続バイト列を想定
-fn write_ppm_binary(path: &Path, width: u32, height: u32, pixels: &[u8]) -> std::io::Result<()> {
-    // 出力ディレクトリ作成（必要なら）
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            fs::create_dir_all(parent)?;
-        }
-    }
-
-    // 入力検証
-    let expected = (width as usize) * (height as usize) * 3;
-    assert!(pixels.len() == expected, "pixel buffer size mismatch: {} != {}", pixels.len(), expected);
-
-    // 上書きで作成（初回は新規作成）
-    let file = File::create(path)?;
-    let mut writer = BufWriter::new(file);
-
-    // PPM (P6) ヘッダ: マジック、サイズ、最大値
-    writer.write_all(format!("P6\n{} {}\n255\n", width, height).as_bytes())?;
-
-    // ピクセル本体
-    writer.write_all(pixels)?;
-
-    writer.flush()?;
-    Ok(())
-}
+// 出力は ImageBackend 経由に統一（PPM 以外の追加も容易にする）
 
 fn main() -> std::io::Result<()> {
     // マテリアル登録
     let mut mats = MaterialRegistry::new();
-    let orange: MaterialId = mats.add(DotShading { albedo: Color::new(0.9, 0.6, 0.2) });
+    let _orange: MaterialId = mats.add(DotShading { albedo: Color::new(0.9, 0.6, 0.2) });
     let gray: MaterialId = mats.add(DotShading { albedo: Color::new(0.7, 0.7, 0.7) });
     let green: MaterialId = mats.add(DotShading { albedo: Color::new(0.2, 0.8, 0.3) });
 
@@ -173,13 +150,14 @@ fn main() -> std::io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .expect("Time went backwards")
         .as_secs();
-    let filename = format!("output/{}.ppm", timestamp);
+    let backend = PpmBackend::default();
+    let filename = format!("output/{}.{}", timestamp, backend.file_extension());
     let out_path = Path::new(&filename);
     
     // 使用するサンプラーを選択：汎用回転グリッド RGSS。AA 無しなら `NoAa::default()` を使う。
     let sampler = MsaaRgGeneric::new(8);
     let pixels = render_scene_rgb(WIDTH, HEIGHT, &camera, &world, &mats, &lights, &sky, &sampler);
-    write_ppm_binary(out_path, WIDTH, HEIGHT, &pixels)?;
+    backend.write(out_path, WIDTH, HEIGHT, &pixels)?;
     eprintln!("wrote {}", out_path.display());
     Ok(())
 }
