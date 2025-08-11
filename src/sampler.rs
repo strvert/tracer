@@ -1,11 +1,10 @@
 //! ピクセル内スーパーサンプリング用のサンプリング戦略。
 
-/// サンプラーの簡易インターフェイス。[0,1]^2 内のサブピクセルオフセットを返す。
-/// 各ピクセルで同じオフセットを使い回し（ジッターなし）。
+/// サンプラーのインターフェイス: [0,1]^2 内のサブピクセルオフセット列を `out` に書き出す。
+/// 単一 API に統一し、乱数の有無に関わらずこの関数だけを使う。
 pub trait Sampler: Send + Sync {
-    /// ピクセル内のサブピクセル座標（u,v）。範囲は [0,1]。
-    /// 返り値は自身が所有するバッファへの参照でも、静的配列でもよい。
-    fn samples(&self) -> &[(f32, f32)];
+    /// out を一旦クリアし、サンプルを push する実装にしてください。
+    fn sample_offsets(&self, rng: &mut crate::rng::Rng, out: &mut Vec<(f32, f32)>);
 }
 
 /// ピクセル中心 1 サンプル（アンチエイリアスなし）。
@@ -13,10 +12,9 @@ pub trait Sampler: Send + Sync {
 pub struct NoAa;
 
 impl Sampler for NoAa {
-    fn samples(&self) -> &[(f32, f32)] {
-        // ピクセル中心
-        static NO_AA_SAMPLES: [(f32, f32); 1] = [(0.5, 0.5)];
-        &NO_AA_SAMPLES
+    fn sample_offsets(&self, _rng: &mut crate::rng::Rng, out: &mut Vec<(f32, f32)>) {
+        out.clear();
+        out.push((0.5, 0.5));
     }
 }
 
@@ -25,14 +23,14 @@ impl Sampler for NoAa {
 pub struct Msaa2x2;
 
 impl Sampler for Msaa2x2 {
-    fn samples(&self) -> &[(f32, f32)] {
-        static MSAA_2X2_SAMPLES: [(f32, f32); 4] = [
+    fn sample_offsets(&self, _rng: &mut crate::rng::Rng, out: &mut Vec<(f32, f32)>) {
+        out.clear();
+        out.extend_from_slice(&[
             (0.25, 0.25),
             (0.75, 0.25),
             (0.25, 0.75),
             (0.75, 0.75),
-        ];
-        &MSAA_2X2_SAMPLES
+        ]);
     }
 }
 
@@ -41,17 +39,15 @@ impl Sampler for Msaa2x2 {
 pub struct Msaa2x2Rg;
 
 impl Sampler for Msaa2x2Rg {
-    fn samples(&self) -> &[(f32, f32)] {
+    fn sample_offsets(&self, _rng: &mut crate::rng::Rng, out: &mut Vec<(f32, f32)>) {
+        out.clear();
         // ピクセル中心 (0.5,0.5) 周りに回転配置（範囲は [0,1] 内）。
-        // 中心相対のオフセット: (-0.125,-0.375), (0.375,-0.125), (-0.375,0.125), (0.125,0.375)
-        // を (0.5,0.5) に足した座標。
-        static MSAA_2X2_RG_SAMPLES: [(f32, f32); 4] = [
+        out.extend_from_slice(&[
             (0.375, 0.125),
             (0.875, 0.375),
             (0.125, 0.625),
             (0.625, 0.875),
-        ];
-        &MSAA_2X2_RG_SAMPLES
+        ]);
     }
 }
 
@@ -94,5 +90,8 @@ impl MsaaRgGeneric {
 }
 
 impl Sampler for MsaaRgGeneric {
-    fn samples(&self) -> &[(f32, f32)] { &self.samples }
+    fn sample_offsets(&self, _rng: &mut crate::rng::Rng, out: &mut Vec<(f32, f32)>) {
+        out.clear();
+        out.extend_from_slice(&self.samples);
+    }
 }
