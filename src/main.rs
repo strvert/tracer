@@ -1,4 +1,3 @@
-// use std::fs; // 現在は未使用
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -20,6 +19,8 @@ mod sampler;
 use sampler::{Sampler, MsaaRgGeneric};
 mod output;
 use output::{ImageBackend, PngBackend};
+mod gltf_loader;
+use rayon::prelude::*;
 
 const WIDTH: u32 = 1280; // 720p 横幅
 const HEIGHT: u32 = 720; // 720p 縦幅
@@ -74,43 +75,44 @@ fn ray_color(r: &Ray, world: &dyn Hittable, mats: &MaterialRegistry, lights: &Li
     env.radiance(r.direction)
 }
 
-fn render_scene_rgb(width: u32, height: u32, cam: &Camera, world: &dyn Hittable, mats: &MaterialRegistry, lights: &LightList, env: &dyn Environment, sampler: &dyn Sampler) -> Vec<u8> {
-    let mut buf = Vec::with_capacity((width as usize) * (height as usize) * 3);
-
+fn render_scene_rgb(width: u32, height: u32, cam: &Camera, world: &(dyn Hittable + Send + Sync), mats: &MaterialRegistry, lights: &LightList, env: &dyn Environment, sampler: &dyn Sampler) -> Vec<u8> {
     // サブピクセルのオフセットはサンプラー実装が提供する。
     let offsets = sampler.samples();
+    let inv_gamma = 1.0 / 2.2_f32;
 
-    // 出力時ガンマ補正（sRGB近似）。計算はリニア空間のまま。
-    let inv_gamma = 1.0 / 2.2_f32; // 2.2 の逆数
-
-    for y in (0..height).rev() {
-        for x in 0..width {
-            let mut color = Color::ZERO;
-            for (du, dv) in offsets.iter().copied() {
-                let u = (x as f32 + du) / (width - 1) as f32;
-                let v = (y as f32 + dv) / (height - 1) as f32;
-                let r = cam.get_ray(u, v);
-                color += ray_color(&r, world, mats, lights, env);
+    // 各スキャンライン y を並列に処理し、各行ごとに RGB バイト列を生成して連結。
+    let rows: Vec<Vec<u8>> = (0..height)
+        .into_par_iter()
+        .rev() // もとの描画順を維持（下から上）
+        .map(|y| {
+            let mut row = Vec::with_capacity((width as usize) * 3);
+            for x in 0..width {
+                let mut color = Color::ZERO;
+                for (du, dv) in offsets.iter().copied() {
+                    let u = (x as f32 + du) / (width - 1) as f32;
+                    let v = (y as f32 + dv) / (height - 1) as f32;
+                    let r = cam.get_ray(u, v);
+                    color += ray_color(&r, world, mats, lights, env);
+                }
+                color /= offsets.len() as f32;
+                color = Color::new(
+                    color.x.powf(inv_gamma),
+                    color.y.powf(inv_gamma),
+                    color.z.powf(inv_gamma),
+                );
+                row.extend_from_slice(&color.to_rgb8());
             }
-            color /= offsets.len() as f32; // C = (1/N)·Σ_i C_i（単純平均）
+            row
+        })
+        .collect();
 
-            // ガンマ補正（出力直前）
-            // C_out = C_lin^{1/γ}（ここでは γ ≈ 2.2）
-            color = Color::new(
-                color.x.powf(inv_gamma),
-                color.y.powf(inv_gamma),
-                color.z.powf(inv_gamma),
-            );
-
-            buf.extend_from_slice(&color.to_rgb8());
-        }
-    }
-
+    // 連結
+    let mut buf = Vec::with_capacity((width as usize) * (height as usize) * 3);
+    for row in rows { buf.extend_from_slice(&row); }
     buf
 }
 
 // PPM(P6) を書き出す。pixels は RGB の連続バイト列を想定
-// 出力は ImageBackend 経由に統一（PPM 以外の追加も容易にする）
 
 fn main() -> std::io::Result<()> {
     // マテリアル登録
@@ -130,9 +132,15 @@ fn main() -> std::io::Result<()> {
         Vec3::new( 0.8, -0.2, -1.2),
         Vec3::new( 0.0,  0.7, -1.2),
     ];
-    let indices = vec![[0u32, 1u32, 2u32]];
-    let tri_mesh = Mesh::new(vertices, indices, green);
-    world.add(Box::new(tri_mesh));
+
+    if let Ok(mut mesh) = gltf_loader::load_gltf_mesh(
+        "assets/fox.glb",
+        gray,
+    ) {
+        mesh.set_position(Vec3::new(-0.5, 0.0, -3.0)); // 位置を設定
+        mesh.set_scale_uniform(0.01); // スケールを設定
+        world.add(Box::new(mesh));
+    }
 
     // 点光源
     let mut lights = LightList::new();
@@ -155,7 +163,7 @@ fn main() -> std::io::Result<()> {
     let out_path = Path::new(&filename);
     
     // 使用するサンプラーを選択：汎用回転グリッド RGSS。AA 無しなら `NoAa::default()` を使う。
-    let sampler = MsaaRgGeneric::new(8);
+    let sampler = MsaaRgGeneric::new(1);
     let pixels = render_scene_rgb(WIDTH, HEIGHT, &camera, &world, &mats, &lights, &sky, &sampler);
     backend.write(out_path, WIDTH, HEIGHT, &pixels)?;
     eprintln!("wrote {}", out_path.display());

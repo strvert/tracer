@@ -7,7 +7,7 @@ use crate::math::{lerp, remap};
 /// Environment は、与えられた方向に対する放射輝度（環境放射）を返します。
 /// - radiance(dir): L_env(ω) をリニア色で返す。dir は正規化想定（内部で防御的に正規化）。
 /// - sample/pdf: 将来のモンテカルロ積分用のフック。デフォルトは「球面一様」。
-pub trait Environment {
+pub trait Environment: Send + Sync {
     /// 方向 dir からの環境放射 L_env(dir) を返す（リニア空間）。
     fn radiance(&self, dir: Vec3) -> Color;
 

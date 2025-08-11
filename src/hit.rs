@@ -20,8 +20,8 @@ impl HitRecord {
     }
 }
 
-// 新規: Hittable トレイトと Sphere 実装
-pub trait Hittable {
+// Hittable トレイトと Sphere 実装
+pub trait Hittable: Send + Sync {
     fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord>;
 }
 
@@ -63,13 +63,13 @@ impl Hittable for Sphere {
 // 新規: Hittable のコレクション（シーン）
 #[derive(Default)]
 pub struct HittableList {
-    pub objects: Vec<Box<dyn Hittable>>,
+    pub objects: Vec<Box<dyn Hittable + Send + Sync>>,
 }
 
 impl HittableList {
     pub fn new() -> Self { Self { objects: Vec::new() } }
     pub fn clear(&mut self) { self.objects.clear(); }
-    pub fn add(&mut self, object: Box<dyn Hittable>) { self.objects.push(object); }
+    pub fn add(&mut self, object: Box<dyn Hittable + Send + Sync>) { self.objects.push(object); }
 }
 
 impl Hittable for HittableList {
@@ -159,12 +159,35 @@ pub struct Mesh {
     pub vertices: Vec<Point3>,
     pub indices: Vec<[u32; 3]>,
     pub material_id: MaterialId,
+    // 追加: ローカル→ワールドの簡易変換（ワールド位置と各軸スケール）
+    pub position: Point3,
+    pub scale: Vec3,
 }
 
 impl Mesh {
+    /// 既定の変換（position=0, scale=1）でメッシュを生成。
     pub fn new(vertices: Vec<Point3>, indices: Vec<[u32; 3]>, material_id: MaterialId) -> Self {
-        Self { vertices, indices, material_id }
+        Self { vertices, indices, material_id, position: Point3::ZERO, scale: Vec3::ONE }
     }
+
+    /// 変換付きでメッシュを生成。
+    pub fn with_transform(
+        vertices: Vec<Point3>,
+        indices: Vec<[u32; 3]>,
+        material_id: MaterialId,
+        position: Point3,
+        scale: Vec3,
+    ) -> Self {
+        Self { vertices, indices, material_id, position, scale }
+    }
+
+    /// 位置を再設定。
+    pub fn set_position(&mut self, position: Point3) { self.position = position; }
+
+    /// スケールを再設定（非一様スケール可）。
+    pub fn set_scale(&mut self, scale: Vec3) { self.scale = scale; }
+
+    pub fn set_scale_uniform(&mut self, scale: f32) { self.scale = Vec3::new(scale, scale, scale); }
 }
 
 impl Hittable for Mesh {
@@ -180,9 +203,11 @@ impl Hittable for Mesh {
             if i0 >= self.vertices.len() || i1 >= self.vertices.len() || i2 >= self.vertices.len() {
                 continue;
             }
-            let v0 = self.vertices[i0];
-            let v1 = self.vertices[i1];
-            let v2 = self.vertices[i2];
+            // ローカル頂点にスケール・平行移動を適用してワールド座標へ
+            // v_w = position + (scale ◦ v_local)
+            let v0 = self.position + (self.vertices[i0] * self.scale);
+            let v1 = self.position + (self.vertices[i1] * self.scale);
+            let v2 = self.position + (self.vertices[i2] * self.scale);
 
             // Möller–Trumbore（Triangle と同じ手順）
             // e1=v1-v0, e2=v2-v0, P=d×e2, det=e1·P, T=o-v0, Q=T×e1
@@ -203,6 +228,7 @@ impl Hittable for Mesh {
             if t < t_min || t > closest_so_far { continue; }
 
             let p = r.at(t);
+            // 非一様スケールでも、変換後の辺から計算するクロスは det(S)·S^{-T} n に比例し、方向は正しい。
             let outward_normal = e1.cross(e2).normalized();
             let rec = HitRecord::new(p, t, outward_normal, r.direction, self.material_id);
             closest_so_far = t;
