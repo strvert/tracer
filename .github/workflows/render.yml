@@ -1,0 +1,63 @@
+name: Render and Upload
+
+on:
+  push:
+    branches: [ master, main ]
+  pull_request:
+    branches: [ master, main ]
+  workflow_dispatch:
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        profile: minimal
+        override: true
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/registry
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Cache cargo index
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/git
+        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Cache cargo build
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Create output directory
+      run: mkdir -p output
+    
+    - name: Build and run with stats
+      run: cargo run --release --features stats
+    
+    - name: List generated files
+      run: ls -la output/
+    
+    - name: Upload rendered images
+      uses: actions/upload-artifact@v4
+      with:
+        name: rendered-images-${{ github.sha }}
+        path: output/*.png
+        retention-days: 30
+    
+    - name: Upload stats heatmaps
+      uses: actions/upload-artifact@v4
+      with:
+        name: stats-heatmaps-${{ github.sha }}
+        path: output/*_heat_*.png
+        retention-days: 30
