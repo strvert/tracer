@@ -35,6 +35,7 @@ const HEIGHT: u32 = 720; // 720p 縦幅
 // heatmap 可視化は diagnostics モジュール側へ分離
 
 fn main() -> std::io::Result<()> {
+    env_logger::init();
     // マテリアル登録
     let mut mats = MaterialRegistry::new();
 
@@ -52,31 +53,44 @@ fn main() -> std::io::Result<()> {
 
     // シーン構築
     let mut world = HittableList::new();
+    match gltf_loader::load_gltf_scene_meshes("assets/dragon.glb", orange) {
+        Ok(meshes) => {
+            for mut mesh in meshes {
+                world.add(Box::new(mesh));
+            }
+        }
+        Err(e) => {
+            log::warn!("[main] Failed to load meshes: {}", e);
+        }
+    }
 
-    if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
-        "assets/sphere.glb",
-        green,
-        Vec3::new(0.0, 0.0, -3.0),
-        Mat3::from_euler_y(0.0) * Mat3::from_scale(1.0, 1.0, 1.0),
-    ) {
-        world.add(Box::new(mesh));
-    }
-    if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
-        "assets/fox.glb",
-        orange,
-        Vec3::new(-0.5, -0.5, -3.0),
-        Mat3::from_euler_y(0.5) * Mat3::from_scale(0.01, 0.01, 0.01),
-    ) {
-        world.add(Box::new(mesh));
-    }
-    if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
-        "assets/fox.glb",
-        green,
-        Vec3::new(0.5, -0.5, -3.0),
-        Mat3::from_euler_y(0_f32) * Mat3::from_scale(0.01, 0.01, 0.01),
-    ) {
-        world.add(Box::new(mesh));
-    }
+    // if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
+    //     "assets/sphere.glb",
+    //     green,
+    //     Vec3::new(0.0, 0.0, -3.0),
+    //     Mat3::from_euler_y(0.0) * Mat3::from_scale(1.0, 1.0, 1.0),
+    //     0, // 最初の Mesh を選択
+    // ) {
+    //     world.add(Box::new(mesh));
+    // }
+    // if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
+    //     "assets/fox.glb",
+    //     orange,
+    //     Vec3::new(-0.5, -0.5, -3.0),
+    //     Mat3::from_euler_y(0.5) * Mat3::from_scale(0.01, 0.01, 0.01),
+    //     0, // index 0 の Mesh を選択
+    // ) {
+    //     world.add(Box::new(mesh));
+    // }
+    // if let Ok(mesh) = gltf_loader::load_gltf_mesh_with_transform(
+    //     "assets/fox.glb",
+    //     green,
+    //     Vec3::new(0.5, -0.5, -3.0),
+    //     Mat3::from_euler_y(0_f32) * Mat3::from_scale(0.01, 0.01, 0.01),
+    //     0,
+    // ) {
+    //     world.add(Box::new(mesh));
+    // }
 
     // 点光源
     let mut lights = LightList::new();
@@ -91,7 +105,7 @@ fn main() -> std::io::Result<()> {
 
     // カメラ
     let aspect = WIDTH as f32 / HEIGHT as f32;
-    let camera = Camera::new(Vec3::ZERO, 60.0, aspect);
+    let camera = Camera::new(Vec3::new(0.0, 0.0, 3.0), 60.0, aspect);
 
     // 出力ファイル名
     let timestamp = SystemTime::now()

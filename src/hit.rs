@@ -593,6 +593,9 @@ impl Mesh {
         m
     }
 
+    pub fn add_translate(&mut self, t: Vec3) {
+        self.translate += t;
+    }
     pub fn set_translate(&mut self, t: Vec3) { self.translate = t; }
     pub fn set_linear(&mut self, m: Mat3) {
         self.linear = m;
