@@ -7,3 +7,14 @@ edition = "2024"
 image = { version = "0.25", default-features = false, features = ["png"] }
 gltf = "1.4.1"
 rayon = "1.10"
+
+[features]
+default = []
+bvh-stats = []
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+incremental = false

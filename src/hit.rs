@@ -6,6 +6,72 @@ use crate::types::MaterialId;
 // 数値安定用の小さな閾値（Möller–Trumbore の det 判定などに使用）
 const MT_EPSILON: f32 = 1e-8_f32;
 
+// --- BVH 計測（M1: AABB/ノード/葉/三角カウント; 主レイのみ有効化） -----------------
+#[derive(Clone, Copy, Debug, Default)]
+pub struct BvhStats {
+    pub aabb_tests: u32,
+    pub node_visits: u32,
+    pub leaf_visits: u32,
+    pub tri_tests: u32,
+}
+
+// 実計測は feature("bvh-stats") でのみ有効化。未指定時はゼロコスト no-op。
+#[cfg(feature = "bvh-stats")]
+mod bvh_stats_impl {
+    use super::BvhStats;
+
+    thread_local! {
+        static BVH_STATS_ENABLED: core::cell::Cell<bool> = core::cell::Cell::new(false);
+        static BVH_STATS_PTR: core::cell::Cell<usize> = core::cell::Cell::new(0);
+    }
+
+    pub fn begin_primary_bvh_stats(stats: &mut BvhStats) {
+        let ptr = stats as *mut BvhStats as usize;
+        BVH_STATS_PTR.with(|c| c.set(ptr));
+        BVH_STATS_ENABLED.with(|f| f.set(true));
+    }
+
+    pub fn end_bvh_stats() {
+        BVH_STATS_ENABLED.with(|f| f.set(false));
+        BVH_STATS_PTR.with(|c| c.set(0));
+    }
+
+    #[inline(always)]
+    fn stats_with<F: FnOnce(&mut BvhStats)>(f: F) {
+        BVH_STATS_ENABLED.with(|en| {
+            if en.get() {
+                BVH_STATS_PTR.with(|p| {
+                    let addr = p.get();
+                    if addr != 0 {
+                        // 安全性: ptr は同スレッド内の短命バッファ（呼び出し側で生存管理）
+                        let s = unsafe { &mut *(addr as *mut BvhStats) };
+                        f(s);
+                    }
+                });
+            }
+        });
+    }
+
+    #[inline(always)] pub fn stats_inc_aabb() { stats_with(|s| s.aabb_tests = s.aabb_tests.wrapping_add(1)); }
+    #[inline(always)] pub fn stats_inc_node() { stats_with(|s| s.node_visits = s.node_visits.wrapping_add(1)); }
+    #[inline(always)] pub fn stats_inc_leaf() { stats_with(|s| s.leaf_visits = s.leaf_visits.wrapping_add(1)); }
+    #[inline(always)] pub fn stats_inc_tri()  { stats_with(|s| s.tri_tests  = s.tri_tests .wrapping_add(1)); }
+}
+
+#[cfg(not(feature = "bvh-stats"))]
+mod bvh_stats_impl {
+    use super::BvhStats;
+    pub fn begin_primary_bvh_stats(_stats: &mut BvhStats) {}
+    pub fn end_bvh_stats() {}
+    #[inline(always)] pub fn stats_inc_aabb() {}
+    #[inline(always)] pub fn stats_inc_node() {}
+    #[inline(always)] pub fn stats_inc_leaf() {}
+    #[inline(always)] pub fn stats_inc_tri() {}
+}
+
+#[allow(unused_imports)]
+pub use bvh_stats_impl::{begin_primary_bvh_stats, end_bvh_stats, stats_inc_aabb, stats_inc_leaf, stats_inc_node, stats_inc_tri};
+
 #[derive(Clone, Copy, Debug)]
 pub struct HitRecord {
     pub t: f32,
@@ -114,11 +180,13 @@ impl HittableList {
 
 impl Hittable for HittableList {
     fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
+        let inv_dir = Vec3::new(1.0 / r.direction.x, 1.0 / r.direction.y, 1.0 / r.direction.z);
+        let o = r.origin;
         traverse_bvh(
             &self.tlas_nodes,
             self.tlas_root,
             t_max,
-            |idx, closest| self.tlas_nodes[idx].bounds.hit(r, t_min, closest),
+            |idx, closest| self.tlas_nodes[idx].bounds.hit(o, inv_dir, t_min, closest),
             |start, count, closest| {
                 let end = start + count;
                 let mut best: Option<HitRecord> = None;
@@ -199,6 +267,24 @@ fn triangle_geometric_normal(v0: Vec3, v1: Vec3, v2: Vec3) -> Vec3 {
     (v1 - v0).cross(v2 - v0).normalized()
 }
 
+/// 前計算済み e1/e2 を使う高速 Möller–Trumbore。
+#[inline(always)]
+fn intersect_triangle_precomputed(r: &Ray, v0: Vec3, e1: Vec3, e2: Vec3, t_min: f32, t_max: f32) -> Option<(f32, f32, f32)> {
+    let pvec = r.direction.cross(e2);
+    let det = e1.dot(pvec);
+    if det.abs() < MT_EPSILON { return None; }
+    let inv_det = 1.0 / det;
+    let tvec = r.origin - v0;
+    let u = tvec.dot(pvec) * inv_det;
+    if u < 0.0 || u > 1.0 { return None; }
+    let qvec = tvec.cross(e1);
+    let v = r.direction.dot(qvec) * inv_det;
+    if v < 0.0 || u + v > 1.0 { return None; }
+    let t = e2.dot(qvec) * inv_det;
+    if t < t_min || t > t_max { return None; }
+    Some((t, u, v))
+}
+
 impl Hittable for Triangle {
     fn hit(&self, r: &Ray, t_min: f32, t_max: f32) -> Option<HitRecord> {
         if let Some((t, _u, _v)) = intersect_triangle_moller_trumbore(r, self.v0, self.v1, self.v2, t_min, t_max) {
@@ -265,39 +351,27 @@ impl Aabb {
 
     fn centroid(self) -> Vec3 { (self.min + self.max) * 0.5 }
 
-    // スラブ法: レイと AABB の交差テスト。返値は [t_near, t_far] と交差有無。
-    fn hit(&self, r: &Ray, mut t_min: f32, mut t_max: f32) -> Option<(f32, f32)> {
-        // 各軸で [t0, t1] を更新
+    /// スラブ法（ブランチレス寄り）: 事前計算した inv_dir を受け取り、[t_near,t_far] を返す。
+    #[inline(always)]
+    pub fn hit(&self, o: Vec3, inv_d: Vec3, mut t_min: f32, mut t_max: f32) -> Option<(f32, f32)> {
         // X
-        if r.direction.x != 0.0 {
-            let inv = 1.0 / r.direction.x;
-            let mut t0 = (self.min.x - r.origin.x) * inv;
-            let mut t1 = (self.max.x - r.origin.x) * inv;
-            if t0 > t1 { core::mem::swap(&mut t0, &mut t1); }
-            t_min = t_min.max(t0);
-            t_max = t_max.min(t1);
-            if t_min > t_max { return None; }
-        } else if r.origin.x < self.min.x || r.origin.x > self.max.x { return None; }
+        let tx1 = (self.min.x - o.x) * inv_d.x;
+        let tx2 = (self.max.x - o.x) * inv_d.x;
+        t_min = t_min.max(tx1.min(tx2));
+        t_max = t_max.min(tx1.max(tx2));
+        if t_min > t_max { return None; }
         // Y
-        if r.direction.y != 0.0 {
-            let inv = 1.0 / r.direction.y;
-            let mut t0 = (self.min.y - r.origin.y) * inv;
-            let mut t1 = (self.max.y - r.origin.y) * inv;
-            if t0 > t1 { core::mem::swap(&mut t0, &mut t1); }
-            t_min = t_min.max(t0);
-            t_max = t_max.min(t1);
-            if t_min > t_max { return None; }
-        } else if r.origin.y < self.min.y || r.origin.y > self.max.y { return None; }
+        let ty1 = (self.min.y - o.y) * inv_d.y;
+        let ty2 = (self.max.y - o.y) * inv_d.y;
+        t_min = t_min.max(ty1.min(ty2));
+        t_max = t_max.min(ty1.max(ty2));
+        if t_min > t_max { return None; }
         // Z
-        if r.direction.z != 0.0 {
-            let inv = 1.0 / r.direction.z;
-            let mut t0 = (self.min.z - r.origin.z) * inv;
-            let mut t1 = (self.max.z - r.origin.z) * inv;
-            if t0 > t1 { core::mem::swap(&mut t0, &mut t1); }
-            t_min = t_min.max(t0);
-            t_max = t_max.min(t1);
-            if t_min > t_max { return None; }
-        } else if r.origin.z < self.min.z || r.origin.z > self.max.z { return None; }
+        let tz1 = (self.min.z - o.z) * inv_d.z;
+        let tz2 = (self.max.z - o.z) * inv_d.z;
+        t_min = t_min.max(tz1.min(tz2));
+        t_max = t_max.min(tz1.max(tz2));
+        if t_min > t_max { return None; }
         Some((t_min, t_max))
     }
 
@@ -402,13 +476,19 @@ where
     if nodes.is_empty() { return None; }
     let mut closest_so_far = t_max;
     let mut best: Option<HitRecord> = None;
-    let mut stack: Vec<usize> = Vec::with_capacity(64);
-    stack.push(root);
+    let mut stack: [usize; 128] = [0; 128];
+    let mut sp: usize = 0;
+    stack[sp] = root; sp += 1;
 
-    while let Some(node_idx) = stack.pop() {
+    while sp > 0 {
+        sp -= 1;
+        let node_idx = stack[sp];
+        stats_inc_node();
+        stats_inc_aabb();
         if aabb_hit(node_idx, closest_so_far).is_none() { continue; }
         let node = &nodes[node_idx];
         if node.left < 0 { // 葉
+            stats_inc_leaf();
             if let Some(rec) = visit_leaf(node.start as usize, node.count as usize, closest_so_far) {
                 if rec.t < closest_so_far { closest_so_far = rec.t; }
                 best = Some(rec);
@@ -417,15 +497,17 @@ where
             // 近い順探索（遠い方を先push）
             let lidx = node.left as usize;
             let ridx = node.right as usize;
+            stats_inc_aabb();
             let lhit = aabb_hit(lidx, closest_so_far).map(|(tn, _)| tn);
+            stats_inc_aabb();
             let rhit = aabb_hit(ridx, closest_so_far).map(|(tn, _)| tn);
             match (lhit, rhit) {
                 (Some(ln), Some(rn)) => {
-                    if ln <= rn { stack.push(ridx); stack.push(lidx); }
-                    else { stack.push(lidx); stack.push(ridx); }
+                    if ln <= rn { debug_assert!(sp + 2 <= stack.len()); stack[sp] = ridx; sp += 1; stack[sp] = lidx; sp += 1; }
+                    else          { debug_assert!(sp + 2 <= stack.len()); stack[sp] = lidx; sp += 1; stack[sp] = ridx; sp += 1; }
                 }
-                (Some(_), None) => stack.push(lidx),
-                (None, Some(_)) => stack.push(ridx),
+                (Some(_), None) => { debug_assert!(sp + 1 <= stack.len()); stack[sp] = lidx; sp += 1; }
+                (None, Some(_)) => { debug_assert!(sp + 1 <= stack.len()); stack[sp] = ridx; sp += 1; }
                 (None, None) => {}
             }
         }
@@ -447,11 +529,21 @@ pub struct Mesh {
     pub translate: Vec3,
     pub linear: Mat3,
     pub inv_linear: Mat3,
+    pub normal_linear: Mat3, // 追加: 法線変換（inv_linear.transpose()）
     // BLAS: ローカル BVH（AABB と三角の並び替え）
     tri_bounds: Vec<Aabb>,
     tri_index: Vec<u32>,
+    tri_accel: Vec<TriAccel>,
     nodes: Vec<BvhNode>,
     root_idx: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct TriAccel {
+    v0: Vec3,
+    e1: Vec3,
+    e2: Vec3,
+    n_g: Vec3,
 }
 
 impl Mesh {
@@ -463,8 +555,10 @@ impl Mesh {
             translate: Vec3::ZERO,
             linear: Mat3::identity(),
             inv_linear: Mat3::identity(),
+            normal_linear: Mat3::identity(),
             tri_bounds: Vec::new(),
             tri_index: Vec::new(),
+            tri_accel: Vec::new(),
             nodes: Vec::new(),
             root_idx: 0,
         };
@@ -480,6 +574,7 @@ impl Mesh {
         linear: Mat3,
     ) -> Self {
         let inv_linear = linear.inverse().unwrap_or(Mat3::identity());
+        let normal_linear = inv_linear.transpose();
         let mut m = Self {
             vertices,
             indices,
@@ -487,8 +582,10 @@ impl Mesh {
             translate,
             linear,
             inv_linear,
+            normal_linear,
             tri_bounds: Vec::new(),
             tri_index: Vec::new(),
+            tri_accel: Vec::new(),
             nodes: Vec::new(),
             root_idx: 0,
         };
@@ -500,6 +597,7 @@ impl Mesh {
     pub fn set_linear(&mut self, m: Mat3) {
         self.linear = m;
         self.inv_linear = m.inverse().unwrap_or(Mat3::identity());
+    self.normal_linear = self.inv_linear.transpose();
     }
 
     // BVH 構築（中央値分割）。ローカル空間内での固定構造。
@@ -507,15 +605,21 @@ impl Mesh {
         let n = self.indices.len();
         self.tri_bounds.clear();
         self.tri_index.clear();
+        self.tri_accel.clear();
         self.nodes.clear();
         self.tri_bounds.reserve(n);
         self.tri_index.reserve(n);
+        self.tri_accel.reserve(n);
         for (ti, idx) in self.indices.iter().enumerate() {
             let v0 = self.vertices[idx[0] as usize];
             let v1 = self.vertices[idx[1] as usize];
             let v2 = self.vertices[idx[2] as usize];
             self.tri_bounds.push(Aabb::from_triangle(v0, v1, v2));
             self.tri_index.push(ti as u32);
+            let e1 = v1 - v0;
+            let e2 = v2 - v0;
+            let n_g = e1.cross(e2).normalized();
+            self.tri_accel.push(TriAccel { v0, e1, e2, n_g });
         }
     if n == 0 { self.root_idx = 0; return; }
     let root = build_bvh_nodes(&mut self.nodes, &mut self.tri_index[..], &self.tri_bounds[..], 4);
@@ -534,25 +638,23 @@ impl Hittable for Mesh {
         let o_local = self.inv_linear.mul_vec3(r.origin - self.translate);
         let d_local = self.inv_linear.mul_vec3(r.direction);
         let r_local = Ray::new(o_local, d_local);
+        let inv_dir_l = Vec3::new(1.0 / d_local.x, 1.0 / d_local.y, 1.0 / d_local.z);
 
         traverse_bvh(
             &self.nodes,
             self.root_idx,
             t_max,
-            |idx, closest| self.nodes[idx].bounds.hit(&r_local, t_min, closest),
+            |idx, closest| self.nodes[idx].bounds.hit(o_local, inv_dir_l, t_min, closest),
             |start, count, closest| {
                 let end = start + count;
                 let mut best: Option<HitRecord> = None;
                 let mut cs = closest;
                 for &tri_id in &self.tri_index[start..end] {
-                    let idx = self.indices[tri_id as usize];
-                    let (i0, i1, i2) = (idx[0] as usize, idx[1] as usize, idx[2] as usize);
-                    if i0 >= self.vertices.len() || i1 >= self.vertices.len() || i2 >= self.vertices.len() { continue; }
-                    let (v0, v1, v2) = (self.vertices[i0], self.vertices[i1], self.vertices[i2]);
-                    if let Some((t, _u, _v)) = intersect_triangle_moller_trumbore(&r_local, v0, v1, v2, t_min, cs) {
+                    let acc = self.tri_accel[tri_id as usize];
+                    stats_inc_tri();
+                    if let Some((t, _u, _v)) = intersect_triangle_precomputed(&r_local, acc.v0, acc.e1, acc.e2, t_min, cs) {
                         let p = r.at(t);
-                        let n_local = triangle_geometric_normal(v0, v1, v2);
-                        let n_world = self.inv_linear.transpose().mul_vec3(n_local).normalized();
+                        let n_world = self.normal_linear.mul_vec3(acc.n_g).normalized();
                         let rec = HitRecord::new(p, t, n_world, r.direction, self.material_id);
                         cs = t; best = Some(rec);
                     }
