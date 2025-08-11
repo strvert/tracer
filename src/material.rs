@@ -13,16 +13,17 @@ pub trait Material {
 }
 
 #[derive(Clone, Debug)]
-pub struct DotShading {
+pub struct Lambertian {
     pub albedo: Color,
 }
 
-impl Material for DotShading {
+impl Material for Lambertian {
     fn shade(&self, ray_in: &Ray, rec: &HitRecord) -> Color {
-        // 入射方向はレイの逆ベクトル。単位化して法線との類似度（コサイン）を取る。
-        let i = (-ray_in.direction).normalized();
-        let ndoti = rec.normal.dot(i).max(0.0);
-        self.albedo * ndoti
+    // Lambert: f = ρ/π, ここでは shade = (ρ/π)·max(n·ω_i, 0)
+    // 既存の約束に合わせ、ray_in.direction は「入射方向の逆」を与えることで i= -ray_in.dir → ω_i
+    let i = (-ray_in.direction).normalized(); // ω_i
+    let ndoti = rec.normal.dot(i).max(0.0);
+    self.albedo * ndoti * core::f32::consts::FRAC_1_PI
     }
 
     fn albedo(&self) -> Color { self.albedo }

@@ -8,7 +8,7 @@ use hit::{Hittable, HittableList, BvhStats, begin_primary_bvh_stats, end_bvh_sta
 mod camera;
 use camera::Camera;
 mod material;
-use material::{DotShading, MaterialRegistry};
+use material::{Lambertian, MaterialRegistry};
 mod light;
 pub use light::{PointLight, LightList};
 mod types;
@@ -36,27 +36,25 @@ fn visible_to_light(rec_p: Vec3, light_pos: Vec3, world: &dyn Hittable) -> bool 
     world.hit(&shadow_ray, 1e-3, dist - 1e-3).is_none()
 }
 
-fn direct_lighting(rec_p: Vec3, n: Vec3, world: &dyn Hittable, mats: &MaterialRegistry, mat_id: MaterialId, lights: &LightList) -> Color {
-    // Lambertian の BRDF は f_r = ρ/π。点光源からの出射は Lo = (ρ/π)·(n·ω_i)_+·L_i。
-    // 点光源の放射輝度は L_i = (I / d^2)·color（逆二乗）。
-    let albedo = mats.get(mat_id).albedo();
+fn direct_lighting(rec_p: Vec3, rec_n: Vec3, world: &dyn Hittable, mats: &MaterialRegistry, mat_id: MaterialId, lights: &LightList) -> Color {
+    // マテリアルの shade() を使って cos項とρ/πを包含した寄与を計算
+    let mat = mats.get(mat_id);
     let mut sum = Color::ZERO;
-    let inv_pi = core::f32::consts::FRAC_1_PI;
-
     for light in lights.iter() {
-        // d_len^2 = ||x_L - p||^2, ω_i = (x_L - p)/d_len, (n·l) = n·ω_i。
         let to_light = light.position - rec_p;
         let d2 = to_light.length_squared();
         if d2 == 0.0 { continue; }
         let wi = to_light / d2.sqrt();
-        let ndotl = n.dot(wi).max(0.0);
-        if ndotl <= 0.0 { continue; }
+        // 可視チェック
+        if rec_n.dot(wi) <= 0.0 { continue; }
         if !visible_to_light(rec_p, light.position, world) { continue; }
-
-        let li = light.color * (light.intensity / d2); // L_i = color·I/d^2
-        sum += albedo * inv_pi * ndotl * li;           // Lo += (ρ/π)·(n·l)·L_i
+        // マテリアルのシェーディング（入射方向ベクトルの逆を ray.direction として与える）
+        let probe_ray = Ray::new(rec_p, -wi);
+        let rec = crate::hit::HitRecord { t: 0.0, p: rec_p, normal: rec_n, front_face: true, material_id: mat_id };
+        let f = mat.shade(&probe_ray, &rec);
+        let li = light.color * (light.intensity / d2);
+        sum += f * li;
     }
-
     sum
 }
 
@@ -118,9 +116,9 @@ fn counts_to_heatmap_rgb(counts: &[u32], width: u32, height: u32) -> Vec<u8> {
 fn main() -> std::io::Result<()> {
     // マテリアル登録
     let mut mats = MaterialRegistry::new();
-    let orange: MaterialId = mats.add(DotShading { albedo: Color::new(0.9, 0.6, 0.2) });
-    let gray: MaterialId = mats.add(DotShading { albedo: Color::new(0.7, 0.7, 0.7) });
-    let green: MaterialId = mats.add(DotShading { albedo: Color::new(0.2, 0.8, 0.3) });
+    let orange: MaterialId = mats.add(Lambertian { albedo: Color::new(0.9, 0.6, 0.2) });
+    let gray: MaterialId = mats.add(Lambertian { albedo: Color::new(0.7, 0.7, 0.7) });
+    let green: MaterialId = mats.add(Lambertian { albedo: Color::new(0.2, 0.8, 0.3) });
 
     // シーン構築: 小球 + 地面の大球 + 単一三角形メッシュ（各オブジェクトにマテリアルIDを割当）
     let mut world = HittableList::new();
@@ -194,10 +192,14 @@ fn main() -> std::io::Result<()> {
 
 fn ray_color(r: &Ray, world: &dyn Hittable, mats: &MaterialRegistry, lights: &LightList, env: &dyn Environment) -> Color {
     if let Some(rec) = world.hit(r, 1e-3, f32::INFINITY) {
-        let direct = direct_lighting(rec.p, rec.normal, world, mats, rec.material_id, lights);
-        let albedo = mats.get(rec.material_id).albedo();
-        let env_term = albedo * core::f32::consts::FRAC_1_PI * env.radiance(rec.normal);
-        return direct + env_term;
+    let direct = direct_lighting(rec.p, rec.normal, world, mats, rec.material_id, lights);
+    // 環境寄与: 既存挙動維持（albedo/π · L_env(n)）を、材質の shade を n 向き入射として近似
+    let mat = mats.get(rec.material_id);
+    let probe_ray = Ray::new(rec.p, -rec.normal); // ω_i = n で近似
+    let rec_stub = crate::hit::HitRecord { t: rec.t, p: rec.p, normal: rec.normal, front_face: rec.front_face, material_id: rec.material_id };
+    let f_env = mat.shade(&probe_ray, &rec_stub); // ≈ ρ/π
+    let env_term = f_env * env.radiance(rec.normal);
+    return direct + env_term;
     }
     env.radiance(r.direction)
 }
