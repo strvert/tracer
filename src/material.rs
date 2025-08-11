@@ -1,33 +1,20 @@
-//! Simple material interface, dot-product material, and a registry for materials.
+//! Simple material interface and a registry for materials.
 
-use crate::hit::HitRecord;
-use crate::math::{Color, Ray};
+use crate::math::Color;
 use crate::types::MaterialId;
 
 pub trait Material {
-    /// Shade using incoming ray and hit information. Return linear color.
-    fn shade(&self, ray_in: &Ray, rec: &HitRecord) -> Color;
-
-    /// Base color used for simple Lambertian direct lighting.
-    fn albedo(&self) -> Color { Color::ONE }
+    /// 直接照明のシェーディング係数を返す（線形色空間）。
+    /// 入力ベクトルはすべて単位ベクトル:
+    /// - wi: 入射（点→光）方向
+    /// - wo: 出射（点→カメラ）方向
+    /// - n:  シェーディング法線
+    fn shade(&self, wi: crate::math::Vec3, wo: crate::math::Vec3, n: crate::math::Vec3) -> Color;
 }
 
-#[derive(Clone, Debug)]
-pub struct Lambertian {
-    pub albedo: Color,
-}
-
-impl Material for Lambertian {
-    fn shade(&self, ray_in: &Ray, rec: &HitRecord) -> Color {
-    // Lambert: f = ρ/π, ここでは shade = (ρ/π)·max(n·ω_i, 0)
-    // 既存の約束に合わせ、ray_in.direction は「入射方向の逆」を与えることで i= -ray_in.dir → ω_i
-    let i = (-ray_in.direction).normalized(); // ω_i
-    let ndoti = rec.normal.dot(i).max(0.0);
-    self.albedo * ndoti * core::f32::consts::FRAC_1_PI
-    }
-
-    fn albedo(&self) -> Color { self.albedo }
-}
+// 古典的アルゴリズム系のマテリアルは submodule に集約
+pub mod classic;
+pub use classic::{Lambertian, Phong};
 
 #[derive(Default)]
 pub struct MaterialRegistry {
