@@ -22,6 +22,7 @@ mod integrator;
 use integrator::DirectLighting;
 mod renderer;
 use renderer::{RenderSettings, Renderer};
+mod diagnostics;
 mod output;
 use output::{ImageBackend, PngBackend};
 mod gltf_loader;
@@ -29,20 +30,7 @@ mod gltf_loader;
 const WIDTH: u32 = 1280; // 720p 横幅
 const HEIGHT: u32 = 720; // 720p 縦幅
 
-#[cfg(feature = "bvh-stats")]
-fn counts_to_heatmap_rgb(counts: &[u32], width: u32, height: u32) -> Vec<u8> {
-    let mut max_c: u32 = 0;
-    for &c in counts { if c > max_c { max_c = c; } }
-    let maxf = (max_c as f32).max(1.0);
-    let mut out = Vec::with_capacity((width as usize) * (height as usize) * 3);
-    for &c in counts {
-        // 対数スケールでコントラストを確保
-        let v = (c as f32 + 1.0).ln() / (maxf + 1.0).ln();
-        let g = (255.0 * v.clamp(0.0, 1.0)) as u8;
-        out.extend_from_slice(&[g, g, g]);
-    }
-    out
-}
+// heatmap 可視化は diagnostics モジュール側へ分離
 
 fn main() -> std::io::Result<()> {
     // マテリアル登録
@@ -109,15 +97,15 @@ fn main() -> std::io::Result<()> {
     let out = renderer.render();
     backend.write(out_path, WIDTH, HEIGHT, &out.pixels)?;
 
-    #[cfg(feature = "bvh-stats")]
+    #[cfg(feature = "stats")]
     {
-        let heat = counts_to_heatmap_rgb(&out.counts, WIDTH, HEIGHT);
+        let heat = diagnostics::heatmap_from_aabb_tests(&out.stats.aabb_tests, WIDTH, HEIGHT);
         let heat_name = format!("output/{}_heat_aabb.{}", timestamp, backend.file_extension());
         let heat_path = Path::new(&heat_name);
         backend.write(heat_path, WIDTH, HEIGHT, &heat)?;
         eprintln!("wrote {} and {}", out_path.display(), heat_path.display());
     }
-    #[cfg(not(feature = "bvh-stats"))]
+    #[cfg(not(feature = "stats"))]
     {
         eprintln!("wrote {}", out_path.display());
     }

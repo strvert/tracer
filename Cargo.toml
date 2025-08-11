@@ -10,7 +10,7 @@ rayon = "1.10"
 
 [features]
 default = []
-bvh-stats = []
+stats = []
 
 [profile.release]
 opt-level = 3

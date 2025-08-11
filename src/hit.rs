@@ -15,8 +15,8 @@ pub struct BvhStats {
     pub tri_tests: u32,
 }
 
-// 実計測は feature("bvh-stats") でのみ有効化。未指定時はゼロコスト no-op。
-#[cfg(feature = "bvh-stats")]
+// 実計測は feature("stats") でのみ有効化。未指定時はゼロコスト no-op。
+#[cfg(feature = "stats")]
 mod bvh_stats_impl {
     use super::BvhStats;
 
@@ -58,7 +58,7 @@ mod bvh_stats_impl {
     #[inline(always)] pub fn stats_inc_tri()  { stats_with(|s| s.tri_tests  = s.tri_tests .wrapping_add(1)); }
 }
 
-#[cfg(not(feature = "bvh-stats"))]
+#[cfg(not(feature = "stats"))]
 mod bvh_stats_impl {
     use super::BvhStats;
     pub fn begin_primary_bvh_stats(_stats: &mut BvhStats) {}

@@ -25,8 +25,13 @@ impl Default for RenderSettings {
 
 pub struct RenderOutput {
     pub pixels: Vec<u8>,
-    #[cfg(feature = "bvh-stats")]
-    pub counts: Vec<u32>,
+    #[cfg(feature = "stats")]
+    pub stats: StatsOutput,
+}
+
+#[cfg(feature = "stats")]
+pub struct StatsOutput {
+    pub aabb_tests: Vec<u32>,
 }
 
 pub struct RenderCtx<'a> {
@@ -94,8 +99,8 @@ impl<'a, I: Integrator, S: Sampler> Renderer<'a, I, S> {
         }
         RenderOutput {
             pixels,
-            #[cfg(feature = "bvh-stats")]
-            counts,
+            #[cfg(feature = "stats")]
+            stats: StatsOutput { aabb_tests: counts },
         }
     }
 }
