@@ -54,10 +54,3 @@ jobs:
         name: rendered-images-${{ github.sha }}
         path: output/*.png
         retention-days: 30
-    
-    - name: Upload stats heatmaps
-      uses: actions/upload-artifact@v4
-      with:
-        name: stats-heatmaps-${{ github.sha }}
-        path: output/*_heat_*.png
-        retention-days: 30
