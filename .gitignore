@@ -1,1 +1,11 @@
-/target
+# Build artifacts
+/target/
+
+# Editor settings
+.vscode/
+
+# Rendered outputs
+/output/*
+
+# Misc
+*.swp/target
