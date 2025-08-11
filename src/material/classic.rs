@@ -44,6 +44,70 @@ impl Material for Phong {
     }
 }
 
+/// 非正規化 Blinn–Phong（N·H モデル）。
+/// 係数: diffuse·max(N·L,0) + specular·max(N·H,0)^shininess
+#[derive(Clone, Debug)]
+pub struct BlinnPhong {
+    /// 拡散係数（色）
+    pub diffuse: Color,
+    /// 鏡面係数（色）
+    pub specular: Color,
+    /// 指数（大きいほどハイライトが鋭い）
+    pub shininess: f32,
+}
+
+impl Material for BlinnPhong {
+    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        // cosθ = max(N·L, 0)
+        let ndotl = n.dot(wi).max(0.0);
+        if ndotl <= 0.0 { return Color::ZERO; }
+        // ハーフベクトル H = normalize(wi + wo)
+        let h = (wi + wo).normalized();
+        // N·H を 0 以上にクランプ
+        let ndoth = n.dot(h).max(0.0);
+        // 非正規化なので、鏡面には ndotl を掛けない（古典的見た目式）
+        let spec = ndoth.powf(self.shininess.max(0.0));
+        self.diffuse * ndotl + self.specular * spec
+    }
+}
+
+/// 正規化 Blinn–Phong（エネルギー整合のための係数）。
+/// BRDF 近似: f_s ≈ ρ_s · (m+8)/(8π) · max(N·H,0)^m
+#[derive(Clone, Debug)]
+pub struct NormalizedBlinnPhong {
+    /// 拡散反射率（色） ρ_d
+    pub diffuse: Color,
+    /// 鏡面反射率（色） ρ_s（0〜1 程度を推奨）
+    pub specular: Color,
+    /// 指数 m（大きいほどローブが鋭い）
+    pub shininess: f32,
+}
+
+impl Material for NormalizedBlinnPhong {
+    fn shade(&self, wi: Vec3, wo: Vec3, n: Vec3) -> Color {
+        // cosθ = max(N·L, 0)
+        let ndotl = n.dot(wi).max(0.0);
+        if ndotl <= 0.0 { return Color::ZERO; }
+        // ハーフベクトル H = normalize(wi + wo)
+        let h = (wi + wo).normalized();
+        // N·H を 0 以上にクランプ
+        let ndoth = n.dot(h).max(0.0);
+
+        // 拡散 BRDF: f_d = ρ_d / π → Li 係数としては ndotl を掛ける
+        let diffuse_term = self.diffuse * (core::f32::consts::FRAC_1_PI * ndotl);
+
+        // 正規化係数: (m+8)/(8π)
+        let m = self.shininess.max(0.0);
+        let norm_coeff = (m + 8.0) * (core::f32::consts::FRAC_1_PI / 8.0);
+        // スペキュラ BRDF: f_s ≈ ρ_s · norm_coeff · (N·H)^m
+        let fs = self.specular * (norm_coeff * ndoth.powf(m));
+        // レンダリング方程式の cosθ（N·L）を掛ける
+        let specular_term = fs * ndotl;
+
+        diffuse_term + specular_term
+    }
+}
+
 /// 正規化 Phong（エネルギー一貫性のある係数）
 /// BRDF: f_s = ρ_s · (n+2)/(2π) · max(R·V,0)^n
 /// このレンダラの API では shade が L_o += shade · L_i に使われるため、
@@ -63,28 +127,19 @@ impl Material for NormalizedPhong {
         // cosθ = max(N·L, 0)
         let ndotl = n.dot(wi).max(0.0); // 入射と法線の余弦
         if ndotl <= 0.0 { return Color::ZERO; } // バックフェースは寄与なし
-
         // 反射ベクトル R = reflect(-wi, n) = -wi + 2(n·wi)n
         let r = -wi + 2.0 * ndotl * n; // 鏡面反射方向
-
         // ハイライトの鋭さ用ドット（R·V）を 0 以上にクランプ
         let rv = r.dot(wo).max(0.0); // 反射方向と視線の整合度
-
         // Lambert の BRDF: f_d = ρ_d/π
-        // 本APIでは shadeが直接 Li 係数となるため、ここで ndotl を掛ける
-        let diffuse_term = self.diffuse * (core::f32::consts::FRAC_1_PI * ndotl);
-
+        let diffuse_term = self.diffuse * core::f32::consts::FRAC_1_PI;
         // 正規化 Phong のスペキュラ BRDF 係数: (n+2)/(2π)
         let n_clamped = self.shininess.max(0.0); // 負の指数を防止
         let norm_coeff = 0.5 * (n_clamped + 2.0) * core::f32::consts::FRAC_1_PI; // (n+2)/(2π)
-
         // スペキュラ BRDF: f_s = ρ_s * norm_coeff * (R·V)^n
         let fs = self.specular * (norm_coeff * rv.powf(n_clamped));
-
-        // レンダリング方程式の cosθ（N·L）はここでまとめて乗算する
-        let specular_term = fs * ndotl;
-
-        // 拡散 + 鏡面（どちらも cosθ を内部で掛け済み）
-        diffuse_term + specular_term
+        let specular_term = fs;
+        // 拡散 + 鏡面
+        (diffuse_term + specular_term) * ndotl
     }
 }

@@ -27,7 +27,7 @@ mod output;
 use output::{ImageBackend, PngBackend};
 
 use crate::material::classic::NormalizedPhong;
-use crate::material::Phong;
+use crate::material::{BlinnPhong, NormalizedBlinnPhong, Phong};
 mod gltf_loader;
 
 const WIDTH: u32 = 1280; // 720p 横幅
@@ -45,10 +45,10 @@ fn main() -> std::io::Result<()> {
     let gray: MaterialId = mats.add(Lambertian {
         albedo: Color::new(0.7, 0.7, 0.7),
     });
-    let green: MaterialId = mats.add(NormalizedPhong {
+    let green: MaterialId = mats.add(NormalizedBlinnPhong {
         diffuse: Color::new(0.2, 0.8, 0.3),
         specular: Color::new(1.0, 1.0, 1.0),
-        shininess: 16.0,
+        shininess: 32.0,
     });
 
     // シーン構築

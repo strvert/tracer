@@ -14,7 +14,7 @@ pub trait Material {
 
 // 古典的アルゴリズム系のマテリアルは submodule に集約
 pub mod classic;
-pub use classic::{Lambertian, Phong};
+pub use classic::{Lambertian, Phong, BlinnPhong, NormalizedBlinnPhong};
 
 #[derive(Default)]
 pub struct MaterialRegistry {
