@@ -1,42 +1,19 @@
 //! glTF から Mesh を構築する簡易ローダ。
 //! - 対応: TRIANGLES と TRIANGLE_STRIP のプリミティブ、position(必須) と indices（なければ順序どおり）
 //! - 変換: ノード変換（シーングラフ）に対応。ノードに Mesh がぶら下がっている場合、親子の TRS を合成して
-//!   Mesh::with_transform(translate, linear) に反映する。linear は R*S（回転*スケール）の 3x3。
+//!   ノードの TRS を 4x4 アフィン（Mat4）として合成し、Mesh::with_xform に渡す。
 
 use log::{debug, warn};
 
 use crate::hit::Mesh;
-use crate::math::{Mat3, Mat4, Vec3};
+use crate::math::{Mat4, Vec3};
 use crate::types::MaterialId;
 
 /// glTF/GLB から最初のメッシュ（全プリミティブ連結）を読み込み、
 /// 指定の position/scale を適用した Mesh を構築する。
 // ----------------------------- 共通ヘルパ -----------------------------
 
-/// クォータニオン(x,y,z,w) → 回転（3x3）。
-fn quat_to_mat3(x: f32, y: f32, z: f32, w: f32) -> Mat3 {
-    let len2 = x * x + y * y + z * z + w * w;
-    let (x, y, z, w) = if len2 > 0.0 {
-        let inv = 1.0 / len2.sqrt();
-        (x * inv, y * inv, z * inv, w * inv)
-    } else {
-        (0.0, 0.0, 0.0, 1.0)
-    };
-    let m00 = 1.0 - 2.0 * (y * y + z * z);
-    let m01 = 2.0 * (x * y - z * w);
-    let m02 = 2.0 * (x * z + y * w);
-    let m10 = 2.0 * (x * y + z * w);
-    let m11 = 1.0 - 2.0 * (x * x + z * z);
-    let m12 = 2.0 * (y * z - x * w);
-    let m20 = 2.0 * (x * z - y * w);
-    let m21 = 2.0 * (y * z + x * w);
-    let m22 = 1.0 - 2.0 * (x * x + y * y);
-    Mat3::from_cols(
-        Vec3::new(m00, m10, m20),
-        Vec3::new(m01, m11, m21),
-        Vec3::new(m02, m12, m22),
-    )
-}
+// TRS の合成は glTF crate 提供の transform().matrix() を使って 4x4 直接取得する。
 
 /// glTF Mesh の全プリミティブを読み取り、vertices/indices に追記する（CCW）。
 fn append_gltf_mesh_data(
@@ -51,7 +28,10 @@ fn append_gltf_mesh_data(
         match mode {
             Mode::Triangles | Mode::TriangleStrip | Mode::TriangleFan => {}
             _ => {
-                warn!("[gltf_loader] skip primitive {}: unsupported mode {:?}", prim_idx, mode);
+                warn!(
+                    "[gltf_loader] skip primitive {}: unsupported mode {:?}",
+                    prim_idx, mode
+                );
                 continue;
             }
         }
@@ -65,14 +45,20 @@ fn append_gltf_mesh_data(
                 pos_count += 1;
             }
         } else {
-            warn!("[gltf_loader] primitive {}: missing POSITION attribute, skipping", prim_idx);
+            warn!(
+                "[gltf_loader] primitive {}: missing POSITION attribute, skipping",
+                prim_idx
+            );
             continue;
         }
 
         let mut tri_count = 0;
         let mut push_tri = |a: u32, b: u32, c: u32| {
             if a == b || b == c || a == c {
-                debug!("[gltf_loader] primitive {}: degenerate triangle skipped: {} {} {}", prim_idx, a, b, c);
+                debug!(
+                    "[gltf_loader] primitive {}: degenerate triangle skipped: {} {} {}",
+                    prim_idx, a, b, c
+                );
                 return;
             }
             indices.push([base_index + a, base_index + b, base_index + c]);
@@ -86,7 +72,10 @@ fn append_gltf_mesh_data(
                     for tri in tmp.chunks_exact(3) {
                         push_tri(tri[0], tri[1], tri[2]);
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLES indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLES indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 } else {
                     let count_this = (vertices.len() as u32) - base_index;
                     let mut i = 0u32;
@@ -94,7 +83,10 @@ fn append_gltf_mesh_data(
                         push_tri(i, i + 1, i + 2);
                         i += 3;
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLES non-indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLES non-indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 }
             }
             Mode::TriangleStrip => {
@@ -109,7 +101,10 @@ fn append_gltf_mesh_data(
                             }
                         }
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLE_STRIP indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLE_STRIP indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 } else {
                     let count_this = (vertices.len() as u32) - base_index;
                     if count_this >= 3 {
@@ -123,7 +118,10 @@ fn append_gltf_mesh_data(
                             k += 1;
                         }
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLE_STRIP non-indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLE_STRIP non-indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 }
             }
             Mode::TriangleFan => {
@@ -134,7 +132,10 @@ fn append_gltf_mesh_data(
                             push_tri(iv[0], iv[k], iv[k + 1]);
                         }
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLE_FAN indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLE_FAN indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 } else {
                     let count_this = (vertices.len() as u32) - base_index;
                     if count_this >= 3 {
@@ -142,7 +143,10 @@ fn append_gltf_mesh_data(
                             push_tri(0, k, k + 1);
                         }
                     }
-                    debug!("[gltf_loader] primitive {}: TRIANGLE_FAN non-indexed, verts={}, tris={}", prim_idx, pos_count, tri_count);
+                    debug!(
+                        "[gltf_loader] primitive {}: TRIANGLE_FAN non-indexed, verts={}, tris={}",
+                        prim_idx, pos_count, tri_count
+                    );
                 }
             }
             _ => {}
@@ -152,12 +156,11 @@ fn append_gltf_mesh_data(
 
 // ----------------------------- メッシュ単体読み込み -----------------------------
 
-pub fn load_gltf_mesh_with_transform(
+pub fn load_gltf_mesh_with_xform(
     path: &str,
     material_id: MaterialId,
-    translate: Vec3,
-    linear: Mat3,
     mesh_index: usize,
+    xform: Mat4,
 ) -> Result<Mesh, Box<dyn std::error::Error>> {
     let (doc, buffers, _images) = gltf::import(path)?;
     let mut vertices: Vec<Vec3> = Vec::new();
@@ -176,28 +179,7 @@ pub fn load_gltf_mesh_with_transform(
             format!("glTF mesh index {} not found", mesh_index),
         )));
     }
-
-    Ok(Mesh::with_transform(
-        vertices,
-        indices,
-        material_id,
-        translate,
-        linear,
-    ))
-}
-
-pub fn load_gltf_mesh(
-    path: &str,
-    material_id: MaterialId,
-    mesh_index: usize,
-) -> Result<Mesh, Box<dyn std::error::Error>> {
-    load_gltf_mesh_with_transform(
-        path,
-        material_id,
-        Vec3::new(0.0, 0.0, 0.0),
-        Mat3::identity(),
-        mesh_index,
-    )
+    Ok(Mesh::with_xform(vertices, indices, material_id, xform))
 }
 
 /// glTF/GLB から「指定インデックスのメッシュ」だけを読み込み、変換を適用した Mesh を返す。
@@ -223,12 +205,8 @@ pub fn load_gltf_scene_meshes(
         material_id: MaterialId,
         out: &mut Vec<Mesh>,
     ) {
-        let (t, r, s) = node.transform().decomposed();
-        let t_local = Vec3::new(t[0], t[1], t[2]);
-        let r_local = quat_to_mat3(r[0], r[1], r[2], r[3]);
-        let s_local = Mat3::from_scale(s[0], s[1], s[2]);
-        let l_local = r_local * s_local; // linear = R * S
-        let m_local = Mat4::from_trs(t_local, l_local); // T * R * S（列優先）
+        // glTF の 4x4（列優先）をそのまま Mat4 にする。
+        let m_local = Mat4::from_cols_array(node.transform().matrix());
         let m_world = parent_m * m_local;
 
         if let Some(gmesh) = node.mesh() {
@@ -236,12 +214,7 @@ pub fn load_gltf_scene_meshes(
             let mut indices: Vec<[u32; 3]> = Vec::new();
             append_gltf_mesh_data(gmesh, buffers, &mut vertices, &mut indices);
             if !vertices.is_empty() && !indices.is_empty() {
-                out.push(Mesh::with_xform(
-                    vertices,
-                    indices,
-                    material_id,
-                    m_world,
-                ));
+                out.push(Mesh::with_xform(vertices, indices, material_id, m_world));
             }
         }
         for child in node.children() {
@@ -251,25 +224,13 @@ pub fn load_gltf_scene_meshes(
 
     if let Some(scene) = doc.default_scene() {
         for node in scene.nodes() {
-            traverse_node(
-                node,
-                Mat4::identity(),
-                &buffers,
-                material_id,
-                &mut out,
-            );
+            traverse_node(node, Mat4::identity(), &buffers, material_id, &mut out);
         }
     } else {
         // 既定シーンが無い場合は全シーンを順次解釈
         for scene in doc.scenes() {
             for node in scene.nodes() {
-                traverse_node(
-                    node,
-                    Mat4::identity(),
-                    &buffers,
-                    material_id,
-                    &mut out,
-                );
+                traverse_node(node, Mat4::identity(), &buffers, material_id, &mut out);
             }
         }
     }

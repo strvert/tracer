@@ -564,34 +564,6 @@ impl Mesh {
         m
     }
 
-    pub fn with_transform(
-        vertices: Vec<Point3>,
-        indices: Vec<[u32; 3]>,
-        material_id: MaterialId,
-        translate: Vec3,
-        linear: Mat3,
-    ) -> Self {
-        let inv_linear = linear.inverse().unwrap_or(Mat3::identity());
-        let normal_linear = inv_linear.transpose();
-        let xform = Mat4::from_trs(translate, linear);
-        let inv_xform = xform.inverse_affine().unwrap_or(Mat4::identity());
-        let mut m = Self {
-            vertices,
-            indices,
-            material_id,
-            xform,
-            inv_xform,
-            normal_linear,
-            tri_bounds: Vec::new(),
-            tri_index: Vec::new(),
-            tri_accel: Vec::new(),
-            nodes: Vec::new(),
-            root_idx: 0,
-        };
-        m.build_bvh();
-        m
-    }
-
     /// 4x4 アフィン行列で直接ワールド変換を与えるコンストラクタ
     pub fn with_xform(
         vertices: Vec<Point3>,
@@ -618,25 +590,6 @@ impl Mesh {
         };
         m.build_bvh();
         m
-    }
-
-    pub fn add_translate(&mut self, t: Vec3) {
-        // xform = T(t) * xform
-        let m = Mat4::from_trs(t, Mat3::identity());
-        self.xform = m * self.xform;
-        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
-    }
-    pub fn set_translate(&mut self, t: Vec3) {
-        let l = self.xform.upper3x3();
-        self.xform = Mat4::from_trs(t, l);
-        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
-    }
-    pub fn set_linear(&mut self, m: Mat3) {
-        let t = self.xform.translation();
-        self.xform = Mat4::from_trs(t, m);
-        let inv_linear = m.inverse().unwrap_or(Mat3::identity());
-        self.normal_linear = inv_linear.transpose();
-        self.inv_xform = self.xform.inverse_affine().unwrap_or(Mat4::identity());
     }
 
     // BVH 構築（中央値分割）。ローカル空間内での固定構造。
